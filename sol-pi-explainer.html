@@ -1,0 +1,468 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SoL-Pi — Auto-Research Loop Explainer</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --bg-soft: #161b22;
+    --bg-soft2: #1c2330;
+    --border: #30363d;
+    --text: #e6edf3;
+    --text-dim: #9da7b3;
+    --accent: #58a6ff;
+    --accent2: #3fb950;
+    --warn: #f0883e;
+    --danger: #f85149;
+    --purple: #bc8cff;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  }
+  html[data-theme="light"] {
+    --bg: #ffffff;
+    --bg-soft: #f6f8fa;
+    --bg-soft2: #eef1f4;
+    --border: #d0d7de;
+    --text: #1f2328;
+    --text-dim: #59636e;
+    --accent: #0969da;
+    --accent2: #1a7f37;
+    --warn: #bc4c00;
+    --danger: #cf222e;
+    --purple: #8250df;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    line-height: 1.55;
+    font-size: 15px;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 1040px; margin: 0 auto; padding: 40px 24px 80px; }
+  h1 { font-size: 30px; margin: 0 0 6px; letter-spacing: -0.02em; }
+  h1 .accent { color: var(--accent); }
+  .subtitle { color: var(--text-dim); margin: 0 0 28px; font-size: 16px; }
+  h2 {
+    font-size: 19px; margin: 44px 0 14px; padding-bottom: 8px;
+    border-bottom: 1px solid var(--border); letter-spacing: -0.01em;
+  }
+  h2 .num {
+    display: inline-block; width: 26px; height: 26px; line-height: 26px; text-align: center;
+    border-radius: 50%; background: var(--accent); color: var(--bg);
+    font-size: 14px; margin-right: 8px; font-family: var(--mono);
+  }
+  p { margin: 0 0 14px; }
+  code, .mono { font-family: var(--mono); font-size: 13px; }
+  p code, li code { background: var(--bg-soft); padding: 2px 6px; border-radius: 5px; border: 1px solid var(--border); }
+  .card {
+    background: var(--bg-soft); border: 1px solid var(--border);
+    border-radius: 10px; padding: 20px; margin: 16px 0;
+  }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 860px) { .grid2 { grid-template-columns: 1fr; } }
+  .pill {
+    display: inline-block; padding: 3px 10px; border-radius: 999px; font-size: 12px;
+    font-family: var(--mono); border: 1px solid var(--border); color: var(--text-dim);
+    margin: 0 6px 6px 0;
+  }
+  .pill.green { color: var(--accent2); border-color: var(--accent2); }
+  .pill.blue { color: var(--accent); border-color: var(--accent); }
+  .pill.purple { color: var(--purple); border-color: var(--purple); }
+  .pill.orange { color: var(--warn); border-color: var(--warn); }
+
+  /* ---------- loop diagram ---------- */
+  .loop {
+    background: var(--bg-soft); border: 1px solid var(--border);
+    border-radius: 12px; padding: 22px; position: relative;
+  }
+  .flow { display: flex; align-items: stretch; gap: 0; flex-wrap: wrap; }
+  .fnode {
+    flex: 1 1 130px; min-width: 120px; background: var(--bg-soft2);
+    border: 1px solid var(--border); border-radius: 9px; padding: 12px 10px;
+    text-align: center; position: relative;
+  }
+  .fnode .t { font-weight: 600; font-size: 13.5px; }
+  .fnode .d { font-size: 11.5px; color: var(--text-dim); margin-top: 4px; }
+  .fnode.gate { border-color: var(--warn); }
+  .fnode.env { border-color: var(--accent); }
+  .fnode.freeze { border-color: var(--purple); }
+  .arrow {
+    align-self: center; padding: 0 7px; color: var(--text-dim);
+    font-size: 17px; flex: 0 0 auto;
+  }
+  .lane-label {
+    font-family: var(--mono); font-size: 11px; letter-spacing: 0.08em;
+    text-transform: uppercase; color: var(--text-dim); margin: 16px 0 6px;
+  }
+  .isolation {
+    margin-top: 16px; border: 1px dashed var(--purple); border-radius: 9px;
+    padding: 12px 14px; background: color-mix(in srgb, var(--purple) 7%, transparent);
+  }
+  html[data-theme="light"] .isolation { background: #f6f0fc; }
+  .isolation .t { font-weight: 600; color: var(--purple); font-size: 13px; }
+
+  /* ---------- tables ---------- */
+  table {
+    width: 100%; border-collapse: collapse; font-size: 13.5px;
+    font-family: var(--mono);
+  }
+  th, td { padding: 8px 10px; text-align: right; border-bottom: 1px solid var(--border); }
+  th:first-child, td:first-child { text-align: left; }
+  thead th { color: var(--text-dim); font-weight: 600; font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.05em; }
+  tr.hl td { background: color-mix(in srgb, var(--accent2) 12%, transparent); font-weight: 700; }
+  html[data-theme="light"] tr.hl td { background: #e8f5ec; }
+  td.good { color: var(--accent2); }
+  td.bad { color: var(--danger); }
+
+  /* ---------- bars ---------- */
+  .bar-row { display: grid; grid-template-columns: 170px 1fr 78px; gap: 10px; align-items: center; margin: 7px 0; }
+  .bar-row .lbl { font-family: var(--mono); font-size: 12.5px; }
+  .bar-track { background: var(--bg-soft2); border-radius: 5px; height: 20px; position: relative; border: 1px solid var(--border); }
+  .bar-fill { height: 100%; border-radius: 4px 0 0 4px; }
+  .bar-row .val { font-family: var(--mono); font-size: 12.5px; text-align: right; }
+
+  /* ---------- mechanism cards ---------- */
+  .mech {
+    background: var(--bg-soft); border: 1px solid var(--border); border-left: 4px solid var(--accent);
+    border-radius: 9px; padding: 16px 18px; margin: 14px 0;
+  }
+  .mech h3 { margin: 0 0 6px; font-size: 16px; }
+  .mech h3 .tag { font-family: var(--mono); font-size: 11px; color: var(--text-dim); font-weight: 400; margin-left: 8px; }
+  .mech p:last-child { margin-bottom: 0; }
+  .mech.m1 { border-left-color: var(--warn); }
+  .mech.m2 { border-left-color: var(--accent); }
+  .mech.m3 { border-left-color: var(--accent2); }
+  .mech.m4 { border-left-color: var(--purple); }
+
+  .callout {
+    border-left: 3px solid var(--warn); background: var(--bg-soft);
+    padding: 12px 16px; border-radius: 0 8px 8px 0; margin: 16px 0; font-size: 14px;
+  }
+  .footer { color: var(--text-dim); font-size: 12.5px; margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--border); }
+  .stat-strip { display: flex; gap: 26px; flex-wrap: wrap; margin: 18px 0; }
+  .stat { text-align: left; }
+  .stat .v { font-size: 24px; font-weight: 700; font-family: var(--mono); color: var(--accent); }
+  .stat .k { font-size: 11.5px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.05em; }
+</style>
+</head>
+<body>
+<script>
+  (function () {
+    const t = new URLSearchParams(location.search).get("theme");
+    if (t === "light" || t === "dark") document.documentElement.dataset.theme = t;
+    else document.documentElement.dataset.theme = window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+  })();
+</script>
+<div class="wrap">
+
+  <h1>SoL-Pi <span class="accent">·</span> Recursively Scaling Auto-Research Loops</h1>
+  <p class="subtitle">
+    An interactive explainer for a working prototype of the SoL-Pi framework —
+    an RSI-inspired system that discovers token-efficient <em>agent harness</em> mechanisms.
+    Prototype numbers shown alongside the paper's reported results.
+  </p>
+
+  <div class="stat-strip">
+    <div class="stat"><div class="v">4</div><div class="k">retained mechanisms</div></div>
+    <div class="stat"><div class="v">2</div><div class="k">sequential gates</div></div>
+    <div class="stat"><div class="v">−49.0%</div><div class="k">paper token traffic</div></div>
+    <div class="stat"><div class="v">−79.8%</div><div class="k">prototype token cost</div></div>
+  </div>
+
+  <h2><span class="num">1</span>The thesis: optimize the harness, not the model</h2>
+  <p>
+    Most efficiency work targets the model — faster kernels, quantization, cheaper routing.
+    SoL-Pi targets the <strong>harness</strong>: the code that presents state, exposes tools,
+    and processes feedback. Harness changes require <em>no model training</em> and compose
+    with every other efficiency win.
+  </p>
+  <div class="grid2">
+    <div class="card">
+      <div class="lane-label">Where existing work spends effort</div>
+      <div class="pill">attention kernels</div>
+      <div class="pill">quantization</div>
+      <div class="pill">model routing</div>
+      <div class="pill">speculative decoding</div>
+      <p style="margin-top:12px;color:var(--text-dim);font-size:13.5px;margin-bottom:0">
+        Lowers <em>cost per token</em>. Orthogonal to SoL-Pi.
+      </p>
+    </div>
+    <div class="card" style="border-color:var(--accent)">
+      <div class="lane-label">Where SoL-Pi spends effort</div>
+      <div class="pill blue">action execution</div>
+      <div class="pill blue">context compaction</div>
+      <div class="pill blue">observation handling</div>
+      <div class="pill blue">delegated reading</div>
+      <p style="margin-top:12px;color:var(--text-dim);font-size:13.5px;margin-bottom:0">
+        Lowers <em>tokens used per task</em> — the first-order cost for
+        long-horizon, unattended agents.
+      </p>
+    </div>
+  </div>
+
+  <h2><span class="num">2</span>The Auto-Research Loop</h2>
+  <p>
+    A research AI watches execution traces from an agent running the base harness, proposes
+    candidate changes, and tests them in prepared environments. Two sequential gates decide
+    what is retained. Development and held-out evaluation are strictly separated.
+  </p>
+  <div class="loop">
+    <div class="lane-label">search / development — feedback allowed</div>
+    <div class="flow">
+      <div class="fnode env"><div class="t">Research<br>environments</div><div class="d">535 executable<br>task environments</div></div>
+      <div class="arrow">→</div>
+      <div class="fnode"><div class="t">Base harness<br>rollouts</div><div class="d">agent runs,<br>traces recorded</div></div>
+      <div class="arrow">→</div>
+      <div class="fnode"><div class="t">Analysis<br>&amp; proposal</div><div class="d">~152 directions<br>across 6 families</div></div>
+      <div class="arrow">→</div>
+      <div class="fnode"><div class="t">Candidate<br>implementation</div><div class="d">Ralph Loop<br>refinement</div></div>
+      <div class="arrow">→</div>
+      <div class="fnode gate"><div class="t">Capability<br>gate</div><div class="d">score within<br>fixed tolerance</div></div>
+      <div class="arrow">→</div>
+      <div class="fnode gate"><div class="t">Efficiency<br>gate</div><div class="d">≥1 declared metric<br>improves</div></div>
+    </div>
+    <div class="flow" style="margin-top:14px">
+      <div class="fnode"><div class="t">Nondominated<br>retention</div><div class="d">Pareto frontier<br>over metrics</div></div>
+      <div class="arrow">→</div>
+      <div class="fnode"><div class="t">Integration<br>into SoL-Pi</div><div class="d">combine &amp; tune<br>mechanisms</div></div>
+      <div class="arrow">→</div>
+      <div class="fnode freeze"><div class="t">FREEZE</div><div class="d">source, metrics,<br>acceptance locked</div></div>
+      <div class="arrow">→</div>
+      <div class="fnode freeze"><div class="t">Held-out<br>evaluation</div><div class="d">EdgeBench,<br>never seen in search</div></div>
+    </div>
+    <div class="isolation">
+      <div class="t">⇄ The isolation boundary</div>
+      <div style="font-size:13.5px;color:var(--text-dim)">
+        Held-out results never feed back into search. A failed validation rejects the
+        candidate outright — it does not trigger another round of optimization. This is
+        what prevents search from patching task-specific solutions into the harness.
+      </div>
+    </div>
+  </div>
+
+  <h2><span class="num">3</span>The two sequential gates</h2>
+  <div class="grid2">
+    <div class="card" style="border-left:3px solid var(--warn)">
+      <div class="lane-label">Gate 1 — capability</div>
+      <p style="font-size:14px;margin-bottom:6px"><strong>Every capability metric must stay within its predeclared tolerance.</strong></p>
+      <p style="font-size:13.5px;color:var(--text-dim);margin-bottom:0">
+        Metrics and tolerances are fixed <em>before</em> search begins and are kept
+        outside the optimizing agent's control — it cannot game the acceptance criteria.
+        Prototype: <code>aggregateScore</code> within <strong>5%</strong> of baseline.
+      </p>
+    </div>
+    <div class="card" style="border-left:3px solid var(--accent2)">
+      <div class="lane-label">Gate 2 — efficiency</div>
+      <p style="font-size:14px;margin-bottom:6px"><strong>At least one declared efficiency metric must improve.</strong></p>
+      <p style="font-size:13.5px;color:var(--text-dim);margin-bottom:0">
+        Among candidates passing both gates, only the <em>nondominated</em> set is retained.
+        Prototype: <code>tokenTraffic</code> or <code>cost</code> must improve by
+        <strong>≥ 5%</strong>.
+      </p>
+    </div>
+  </div>
+
+  <h2><span class="num">4</span>The four retained mechanisms</h2>
+
+  <div class="mech m1">
+    <h3>Action Fusion <span class="tag">action execution · tools</span></h3>
+    <p>
+      Base harness: an edit, then a <em>separate</em> command to test or build it —
+      three API calls. Action Fusion adds an optional <code>then_run</code> parameter to
+      file-mutation tools and returns both outcomes in one observation:
+      <strong>3 calls → 2</strong>. Commands that must inspect the mutation result stay separate.
+    </p>
+    <p>
+      <span class="pill orange">saves 1 model round trip per edit</span>
+      <span class="pill orange">prototype: 1 fusion / run</span>
+    </p>
+  </div>
+
+  <div class="mech m2">
+    <h3>Online Context Compact <span class="tag">context management · progress</span></h3>
+    <p>
+      Reconsiders <em>when</em> to compact, at plan-step completion boundaries. At each
+      boundary it estimates remaining requests from observed requests-per-step and unfinished
+      steps, caps that by what would fill the context window, then compares
+      <strong>projected input savings against the cache-rewrite cost</strong>. Compaction only
+      fires when the gate passes, or when usage approaches the window limit. Later compactions
+      require a larger margin to cover unrecovered rewrite costs.
+    </p>
+    <p>
+      <span class="pill blue">paper: cache-read 2.13B → 1.06B tokens</span>
+      <span class="pill blue">prototype: −34.0% traffic</span>
+    </p>
+  </div>
+
+  <div class="mech m3">
+    <h3>ObservationPack <span class="tag">observation storage · context</span></h3>
+    <p>
+      Large tool outputs (> 10 KiB) recur in later requests long after they stop mattering.
+      ObservationPack archives them locally, sends the <strong>full result for the next two
+      requests</strong>, then substitutes a stable handle, the original size, and a short
+      excerpt of complete head and tail lines. The agent recalls exact pages through the
+      handle on demand.
+    </p>
+    <p>
+      <span class="pill green">prototype: 15 archived, 109 substitutions</span>
+      <span class="pill green">−79.8% cost on long-horizon</span>
+    </p>
+  </div>
+
+  <div class="mech m4">
+    <h3>Evidence-Preserving Reducer <span class="tag">delegated reading · context</span></h3>
+    <p>
+      Compresses build/test logs (≥ 4 KiB) using a <em>low-cost model</em>, then verifies the
+      receipt <em>deterministically</em> — schema, source hash, exit status, exact quotes, and
+      size. Any failure, suspected credential, or no size reduction falls back to the
+      original log. Runs before ObservationPack projects the context, which skips verified
+      receipts to preserve evidence. The auxiliary model extracts; the main agent still
+      diagnoses and acts.
+    </p>
+    <p>
+      <span class="pill purple">deterministic verifier, 5 checks</span>
+      <span class="pill purple">fallback to exact original</span>
+    </p>
+  </div>
+
+  <h2><span class="num">5</span>Results — paper vs. this prototype</h2>
+
+  <h3 style="margin-top:26px">Paper: EdgeBench, GPT-5.6 Sol (Table 1)</h3>
+  <div class="card" style="padding:6px">
+    <table>
+      <thead>
+        <tr><th>Harness</th><th>Traffic (B)</th><th>Cost ($)</th><th>Avg. score</th><th>$ / score</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Codex</td><td>3.0537</td><td>1,787</td><td>34.74</td><td>1.0086</td></tr>
+        <tr><td>OpenSquilla</td><td>1.3353</td><td>1,243</td><td>24.51</td><td>0.9945</td></tr>
+        <tr><td>Oh-My-Pi</td><td>2.2235</td><td>1,832</td><td>26.92</td><td>1.3347</td></tr>
+        <tr><td>OpenCode</td><td>2.5668</td><td>3,422</td><td>29.55</td><td>2.2704</td></tr>
+        <tr><td>Oh-My-Opencode</td><td>2.5825</td><td>2,678</td><td>38.52</td><td>1.3633</td></tr>
+        <tr><td>Pi (base)</td><td>2.1538</td><td>1,339</td><td>44.83</td><td>0.5855</td></tr>
+        <tr class="hl"><td>SoL-Pi [Efficiency]</td><td>1.0990</td><td>894</td><td>42.00</td><td>0.4174</td></tr>
+        <tr><td>SoL-Pi [Performance]</td><td>2.0224</td><td>1,271</td><td>47.21</td><td>0.5280</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p style="font-size:12.5px;color:var(--text-dim)">
+    The complete stack keeps <strong>93.7%</strong> of Pi's score while using
+    <strong>49.0%</strong> fewer tokens and <strong>33.2%</strong> less cost.
+    Against the native Codex harness it saves <strong>50.0%</strong> of cost.
+  </p>
+
+  <h3 style="margin-top:26px">Prototype: search environments, scripted backend</h3>
+  <div class="card" style="padding:6px">
+    <table>
+      <thead>
+        <tr><th>Harness</th><th>Traffic (B)</th><th>Cost ($)</th><th>Score</th><th>vs. base</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>pi-baseline</td><td>0.0047</td><td>9.47</td><td>1.000</td><td>—</td></tr>
+        <tr><td>+action-fusion</td><td>0.0047</td><td>9.47</td><td>1.000</td><td class="bad">−0.1%</td></tr>
+        <tr><td>+online-compact</td><td>0.0031</td><td>6.27</td><td>1.000</td><td class="good">33.7%</td></tr>
+        <tr><td>+evidence-reducer</td><td>0.0047</td><td>9.47</td><td>1.000</td><td>0.0%</td></tr>
+        <tr><td>+observation-pack</td><td>0.0009</td><td>1.91</td><td>1.000</td><td class="good">79.8%</td></tr>
+        <tr class="hl"><td>sol-pi[efficiency]</td><td>0.0009</td><td>1.92</td><td>1.000</td><td class="good">79.7%</td></tr>
+        <tr><td>sol-pi[performance]</td><td>0.0017</td><td>3.52</td><td>1.000</td><td class="good">62.8%</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p style="font-size:12.5px;color:var(--text-dim)">
+    Same shape as the paper's results: score is preserved while cost drops sharply, and the
+    large-object mechanisms (ObservationPack, Evidence-Preserving Reducer) dominate savings on
+    log-heavy tasks. Single-mechanism effects differ because this corpus is small and the
+    backend is scripted; the paper's stack-level interaction is what its Fig. 7 analyzes.
+  </p>
+
+  <h3 style="margin-top:26px">Cost saved vs. baseline</h3>
+  <div class="card">
+    <div class="bar-row">
+      <div class="lbl">+observation-pack</div>
+      <div class="bar-track"><div class="bar-fill" style="width:79.8%;background:var(--accent2)"></div></div>
+      <div class="val good" style="color:var(--accent2)">−79.8%</div>
+    </div>
+    <div class="bar-row">
+      <div class="lbl">sol-pi[efficiency]</div>
+      <div class="bar-track"><div class="bar-fill" style="width:79.7%;background:var(--accent2)"></div></div>
+      <div class="val" style="color:var(--accent2)">−79.7%</div>
+    </div>
+    <div class="bar-row">
+      <div class="lbl">sol-pi[performance]</div>
+      <div class="bar-track"><div class="bar-fill" style="width:62.8%;background:var(--accent2)"></div></div>
+      <div class="val" style="color:var(--accent2)">−62.8%</div>
+    </div>
+    <div class="bar-row">
+      <div class="lbl">+online-compact</div>
+      <div class="bar-track"><div class="bar-fill" style="width:33.7%;background:var(--warn)"></div></div>
+      <div class="val" style="color:var(--warn)">−33.7%</div>
+    </div>
+    <div class="bar-row">
+      <div class="lbl">+action-fusion</div>
+      <div class="bar-track"><div class="bar-fill" style="width:0.1%;background:var(--danger);min-width:3px"></div></div>
+      <div class="val" style="color:var(--danger)">−0.1%</div>
+    </div>
+  </div>
+
+  <h2><span class="num">6</span>Cross-model transfer</h2>
+  <p>
+    SoL-Pi was developed on GPT-5.6 Sol and applied to Opus 5 <strong>without further search
+    or adaptation</strong>. It retained 94.3% of Pi's score while cutting traffic 44.7% and
+    cost 33.5%. Mechanisms trigger less often on the unseen backend, but still improve
+    efficiency where they do — evidence that the improvements live in the harness, not in
+    backend-specific tuning.
+  </p>
+  <div class="callout">
+    <strong>Why this matters:</strong> the mechanism code did not change between backends.
+    If the gains had come from overfitting to one model's trajectory patterns, transfer
+    would have collapsed. The paper's Fig. 6 shows lower trigger rates on Opus 5 with
+    efficiency still improving — the prototype's gate logs reproduce this same signature.
+  </div>
+
+  <h2><span class="num">7</span>The recursion, and its limits</h2>
+  <div class="grid2">
+    <div class="card">
+      <div class="lane-label">Recursive efficient improvement</div>
+      <p style="font-size:13.5px;margin-bottom:0">
+        A cheaper harness lowers the cost of the auto-research that builds its
+        <em>successor</em>: a fixed budget covers more environments, trajectories, and
+        ideas. Efficiency becomes both an outcome of harness research and an input to
+        expanding it. The authors are explicit that this is a long-term vision, not an
+        effect the study demonstrates.
+      </p>
+    </div>
+    <div class="card">
+      <div class="lane-label">Pretraining the harness</div>
+      <p style="font-size:13.5px;margin-bottom:0">
+        Exposing the harness to many tasks and updating it from the resulting trajectories
+        is analogous to pretraining. The hypothesis: scaling executable environments
+        <em>and</em> idea diversity yields sustained, transferable gains — moving automated
+        harness discovery toward production-level outcomes.
+      </p>
+    </div>
+  </div>
+  <div class="callout" style="border-left-color:var(--danger)">
+    <strong>What the paper does not claim:</strong> no scaling law for search breadth/depth
+    (search is too expensive to ablate under a fixed budget); single-backend training only;
+    and held-out evaluation is on the public 51/134 EdgeBench tasks. The authors call the
+    transfer evidence <em>preliminary</em>.
+  </div>
+
+  <div class="footer">
+    Prototype: <span class="mono">sol-pi/</span> in this workspace —
+    <span class="mono">npm run research</span> runs the Auto-Research Loop end to end,
+    <span class="mono">npm test</span> runs 24 tests covering all four mechanisms and both gates.<br><br>
+    Paper: Liu, Ye, Gao, Cao, Li, Zhuge, et al. <em>SoL-Pi: Recursively Scaling Auto-Research
+    Loops for Efficient Agent Harness</em>, arXiv:2609.20519v1, NVIDIA / NTU / MIT, 2026.
+    Prototype figures are from this workspace's simulation and are not comparable in
+    magnitude to the paper's production-scale runs.
+  </div>
+
+</div>
+</body>
+</html>

@@ -1,0 +1,15 @@
+{
+  "name": "sol-pi",
+  "version": "0.1.0",
+  "description": "SoL-Pi: Recursively Scaling Auto-Research Loops for Efficient Agent Harness",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "demo": "tsx src/cli.ts",
+    "research": "tsx src/cli.ts --research",
+    "test": "tsx --test tests/**/*.test.ts",
+    "typecheck": "tsc --noEmit",
+    "lint": "tsc --noEmit"
+  },
+  "license": "MIT"
+}
