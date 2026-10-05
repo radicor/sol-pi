@@ -74,7 +74,8 @@ export class ScriptedModel implements ModelBackend {
     if (step.kind === "tool") {
       calls = step.calls;
       // If the harness exposes the fused schema, use it: this is the model-side
-      // half of Action Fusion, and is what generates the measured saving.
+      // half of Action Fusion. This fuses write|edit + run, mirroring the
+      // harness-side transformCalls; together they take 3 calls -> 1.
       if (this.supportsFusion && this.seenFusionSchema) {
         calls = this.tryFuse(calls, req.tools);
       }
@@ -95,16 +96,17 @@ export class ScriptedModel implements ModelBackend {
 
   /** Fuse a `write`/`edit` immediately followed by a `run` into a single call. */
   private tryFuse(calls: ToolCall[], tools: ToolDefinition[]): ToolCall[] {
-    const fusionTool = tools.find((t) => t.name === "write_file" && (t.parameters as Record<string, unknown>).then_run);
+    const fusionTool = tools.find((t) => t.name === "write_file" && fusionParam(t));
     if (!fusionTool || calls.length < 2) return calls;
     const [a, b] = calls;
     const isMutation = a.tool === "write_file" || a.tool === "edit_file";
     const isFollowRun = b.tool === "run";
     if (!isMutation || !isFollowRun) return calls;
+    const command = String(b.args.command ?? "");
     return [
       {
         tool: a.tool,
-        args: { ...a.args, then_run: (b.args.command as string[]) ?? [String(b.args.command ?? "")] },
+        args: { ...a.args, then_run: [command] },
       },
     ];
   }
@@ -121,10 +123,14 @@ export class ScriptedModel implements ModelBackend {
   }
 
   notifySchema(tools: ToolDefinition[]): void {
-    this.seenFusionSchema = tools.some(
-      (t) => t.name === "write_file" && Boolean((t.parameters as Record<string, unknown>).then_run),
-    );
+    this.seenFusionSchema = tools.some((t) => t.name === "write_file" && fusionParam(t));
   }
+}
+
+/** `then_run` is nested under `parameters.properties` by ActionFusion. */
+function fusionParam(t: ToolDefinition): unknown {
+  const props = (t.parameters as { properties?: Record<string, unknown> } | undefined)?.properties;
+  return props?.then_run;
 }
 
 /**

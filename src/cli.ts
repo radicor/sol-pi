@@ -4,8 +4,16 @@ import { ScriptedModel, ScriptStep } from "./core/model.js";
 import { ToolCall } from "./core/types.js";
 import { DEFAULT_RATES } from "./core/usage.js";
 import { SolPiConfig, buildMechanisms } from "./mechanisms/stack.js";
-import { AutoResearchLoop, CandidateConfig, heldOutEvaluation, ProposalFamily } from "./research/loop.js";
+import {
+  AutoResearchLoop,
+  CandidateConfig,
+  EvalResult,
+  ProposalFamily,
+  heldOutEvaluation,
+  heldOutVerdict,
+} from "./research/loop.js";
 import { HELD_OUT_ENVIRONMENTS, LONG_HORIZON_TASK, SEARCH_ENVIRONMENTS } from "./tasks/corpus.js";
+import { writeFileSync } from "node:fs";
 
 /**
  * The demo drives the whole pipeline end to end:
@@ -26,18 +34,6 @@ const FIXTURES: Record<string, { write: string; path: string }> = {
   "heldout-002": { path: "buffer.cpp", write: "char buf[1024];\n" },
 };
 
-function planFor(taskId: string): { steps: Array<{ id: number; title: string; status: string }> } {
-  void taskId;
-  return {
-    steps: [
-      { id: 1, title: "Read files", status: "done" },
-      { id: 2, title: "Edit code", status: "done" },
-      { id: 3, title: "Run tests", status: "pending" },
-      { id: 4, title: "Verify", status: "pending" },
-    ],
-  };
-}
-
 function planSteps(statuses: Array<"pending" | "in_progress" | "done">) {
   return [
     { id: 1, title: "Read files", status: statuses[0] },
@@ -49,6 +45,7 @@ function planSteps(statuses: Array<"pending" | "in_progress" | "done">) {
 
 function scriptFor(task: TaskSpec, config: CandidateConfig): ScriptStep[] {
   const fix = FIXTURES[task.id];
+  if (!fix) throw new Error(`no fixture for task ${task.id}`);
   const steps: ScriptStep[] = [
     { kind: "tool", calls: [{ tool: "read_file", args: { path: fix.path } }] },
     // plan boundary: reading complete -> OnlineContextCompact evaluates the gate
@@ -95,8 +92,9 @@ function buildHarness(config: CandidateConfig, opts: HarnessOptions): Harness {
   return new Harness({ ...opts, mechanisms: buildMechanisms(solConfig) });
 }
 
+/** Print a fixed-width row, truncating overlong cells so one wide id cannot shift the columns. */
 function row(columns: string[], widths: number[]): string {
-  return columns.map((c, i) => String(c).padEnd(widths[i])).join("  ");
+  return columns.map((c, i) => (c.length > widths[i] ? c.slice(0, widths[i] - 1) + "…" : c).padEnd(widths[i])).join("  ");
 }
 
 interface CandidateDef {
@@ -143,16 +141,19 @@ function fmt(n: number, digits = 3): string {
   return n.toFixed(digits);
 }
 
-function printTable(results: Map<string, import("./research/loop.js").EvalResult>): void {
-  const widths = [24, 10, 14, 12, 10, 12, 14];
+const TABLE_WIDTHS = [24, 10, 14, 12, 10, 12, 14] as const;
+
+function printTable(results: Map<string, EvalResult>): void {
+  const widths = [...TABLE_WIDTHS];
   console.log();
-  console.log(row(["harness", "score", "traffic(B)", "cost($)", "solved", "tok eff", "vs base cost"], widths));
-  console.log("-".repeat(110));
+  // Token traffic is reported in millions, matching the divisor below.
+  console.log(row(["harness", "score", "traffic(M)", "cost($)", "solved", "tok eff", "vs base cost"], widths));
+  console.log("-".repeat(widths.reduce((n, w) => n + w, 0) + (widths.length - 1) * 2));
   const base = results.get("pi-baseline");
   for (const [id, r] of results) {
     const vs = base && base.configId !== id ? `${(((base.cost - r.cost) / base.cost) * 100).toFixed(1)}%` : "--";
     console.log(
-      row([id, fmt(r.aggregateScore), (r.tokenTraffic / 1e9).toFixed(4), r.cost.toFixed(2), `${r.solved}/${r.total}`, r.tokenEfficiency.toFixed(4), vs], widths),
+      row([id, fmt(r.aggregateScore), (r.tokenTraffic / 1e6).toFixed(4), r.cost.toFixed(2), `${r.solved}/${r.total}`, r.tokenEfficiency.toFixed(4), vs], widths),
     );
   }
 }
@@ -179,21 +180,33 @@ async function main() {
   });
 
   const summary = await loop.run();
-  const all = new Map<string, import("./research/loop.js").EvalResult>([...loop.getResults()]);
+  const all = new Map<string, EvalResult>([...loop.getResults()]);
 
   printTable(all);
 
+  const acceptance = AutoResearchLoop.defaultAcceptance();
   console.log();
   console.log("acceptance rule (fixed before search, never under the optimizer's control):");
-  console.log("  capability gate : aggregateScore must stay within 5% of the baseline");
-  console.log("  efficiency gate : tokenTraffic or cost must improve by >= 5%");
+  console.log(`  capability gate : ${acceptance.capabilityMetric} must stay within ${(acceptance.tolerance * 100).toFixed(0)}% of the baseline`);
+  console.log(`  efficiency gate : ${acceptance.efficiencyMetrics.join(" or ")} must improve by >= ${(acceptance.minEfficiencyGain * 100).toFixed(0)}%`);
   console.log(`retained        : ${summary.retained.join(", ") || "(none)"}`);
   console.log(`rejected        : ${summary.rejected.join(", ") || "(none)"}`);
+
+  // Freeze what the search actually retained, not a hardcoded id. Falling back
+  // to the baseline keeps the demo runnable even when the gates reject everything.
+  const frozen = summary.best.config;
+  const frozenId = summary.best.configId;
+  if (frozenId === summary.baseline.configId) {
+    console.log(`frozen          : ${frozenId} (search retained no improvement over the baseline)`);
+  } else {
+    console.log(`frozen          : ${frozenId}`);
+  }
+
+  let heldOutPassed = true;
 
   if (doResearch) {
     console.log();
     console.log("=== FREEZE + HELD-OUT EVALUATION (results do not feed back into search) ===");
-    const frozen = toConfig(CANDIDATES.find((c) => c.id === "sol-pi[efficiency]")!);
     const heldOut = await heldOutEvaluation(
       frozen,
       HELD_OUT_ENVIRONMENTS,
@@ -202,9 +215,6 @@ async function main() {
       DEFAULT_RATES,
       24,
       (task, config) => scriptFor(task, config),
-    );
-    console.log(
-      `held-out ${frozen.id}: score=${fmt(heldOut.aggregateScore)} solved=${heldOut.solved}/${heldOut.total} cost=$${heldOut.cost.toFixed(2)} traffic=${(heldOut.tokenTraffic / 1e9).toFixed(4)}B`,
     );
     const baseHeld = await heldOutEvaluation(
       toConfig(CANDIDATES[0]),
@@ -215,15 +225,24 @@ async function main() {
       24,
       (task, config) => scriptFor(task, config),
     );
-    console.log(
-      `held-out ${baseHeld.configId}: score=${fmt(baseHeld.aggregateScore)} solved=${baseHeld.solved}/${baseHeld.total} cost=$${baseHeld.cost.toFixed(2)} traffic=${(baseHeld.tokenTraffic / 1e9).toFixed(4)}B`,
-    );
+    for (const [label, r] of [["frozen", heldOut], ["baseline", baseHeld]] as const) {
+      console.log(
+        `held-out ${label.padEnd(8)} ${r.configId.padEnd(20)} score=${fmt(r.aggregateScore)} solved=${r.solved}/${r.total} cost=$${r.cost.toFixed(2)} traffic=${(r.tokenTraffic / 1e6).toFixed(4)}M`,
+      );
+    }
     const saved = ((baseHeld.cost - heldOut.cost) / baseHeld.cost) * 100;
     console.log(`cost saved on held-out: ${saved.toFixed(1)}%`);
+
+    // The held-out result is gated, not merely reported: a regression here
+    // rejects the candidate instead of being presented as a pass.
+    const verdict = heldOutVerdict(heldOut, baseHeld, acceptance);
+    console.log(`held-out verdict      : ${verdict.pass ? "PASS" : "FAIL"} — ${verdict.reasons.join("; ")}`);
+    if (!verdict.pass) heldOutPassed = false;
   }
 
   console.log();
   console.log("=== single-task mechanism activation on the long-horizon task (paper Fig. 6 style) ===");
+  const activation: Record<string, unknown> = {};
   for (const mech of ["ActionFusion", "ObservationPack", "EvidencePreservingReducer", "OnlineContextCompact"] as const) {
     const cfg: CandidateConfig = { id: mech, mechanisms: [mech], params: {}, family: "tools", origin: "add-one" };
     const task = LONG_HORIZON_TASK;
@@ -232,9 +251,49 @@ async function main() {
     const h = buildHarness(cfg, { id: mech, model, env, maxTurns: 40 });
     const res = await h.run();
     const stats = (h.mechanisms[0] as unknown as { stats?: Record<string, number> }).stats;
+    activation[mech] = {
+      turns: res.turns,
+      tokens: res.usage.input + res.usage.output,
+      cost: res.cost,
+      stats: stats ?? {},
+    };
     console.log(
       `${mech.padEnd(26)} turns=${res.turns} tokens=${(res.usage.input + res.usage.output).toLocaleString()} cost=$${res.cost.toFixed(3)} stats=${JSON.stringify(stats ?? {})}`,
     );
+  }
+
+  // Emit every published number from the program itself, so the README and the
+  // explainer are regenerated rather than hand-transcribed.
+  writeFileSync(
+    "research-results.json",
+    JSON.stringify(
+      {
+        acceptance,
+        table: [...all].map(([id, r]) => ({
+          id,
+          aggregateScore: r.aggregateScore,
+          tokenTraffic: r.tokenTraffic,
+          cost: r.cost,
+          solved: r.solved,
+          total: r.total,
+          tokenEfficiency: r.tokenEfficiency,
+        })),
+        retained: summary.retained,
+        rejected: summary.rejected,
+        frozen: frozenId,
+        heldOutPassed,
+        activation,
+      },
+      null,
+      2,
+    ) + "\n",
+  );
+  console.log();
+  console.log("wrote research-results.json (the single source for published numbers)");
+
+  if (!heldOutPassed) {
+    console.error("held-out validation failed; rejecting the frozen candidate");
+    process.exitCode = 2;
   }
 }
 

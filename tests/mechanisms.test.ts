@@ -151,6 +151,57 @@ test("Reducer bypasses file reads and search results", () => {
   assert.equal(reducer.stats.reduced, 0, "only build/test logs are eligible");
 });
 
+test("Reducer reduces the corpus's own bigLog output (regression: the extractor once matched none of it)", () => {
+  // The shipped corpus emits bracketed `[dep]`/`[warn]`/`[summary]` lines, and
+  // the original evidence regex required a line-start letter, so every log
+  // produced zero quotes and the verifier fell back unconditionally. This test
+  // asserts the reducer actually reduces what the environment generates.
+  const env = new Environment(REPO_TASKS[0]);
+  const out = env.run("test");
+  const reducer = new EvidencePreservingReducer({ thresholdBytes: 1000 });
+  const result = reducer.transformResult(out, fakeCtx(1));
+
+  assert.ok(result.stdout.startsWith(RECEIPT_MARKER), "a real test log becomes a receipt");
+  assert.ok(reducer.stats.reduced === 1, "reduced a real log");
+  assert.ok(reducer.stats.fallbacks === 0, "no fallback");
+  assert.ok(reducer.stats.savedBytes > 0, "saved bytes");
+  assert.ok(reducer.originalFor(out.callId) !== undefined, "exact original archived");
+
+  // Deterministic across repeated extractions of the same log.
+  const again = new EvidencePreservingReducer({ thresholdBytes: 1000 }).transformResult(out, fakeCtx(1));
+  assert.equal(again.stdout, result.stdout, "identical logs yield identical receipts");
+});
+
+test("Reducer selects failure evidence ahead of routine warnings", () => {
+  const env = new Environment(REPO_TASKS[0]);
+  const out = env.run("test");
+  const receipt = new SimpleExtractor(1.0).extract(out.stdout, 1);
+  const kinds = receipt.quotes.map((q) => q.slice(0, 30));
+  assert.ok(kinds.some((q) => /AssertionError/.test(q)), "the assertion is quoted");
+  assert.ok(kinds.some((q) => /passed|failed/.test(q)), "the tally line is quoted");
+});
+
+test("Reducer applies the fidelity knob deterministically", () => {
+  const env = new Environment(REPO_TASKS[0]);
+  const out = env.run("test");
+  const counts = Array.from({ length: 4 }, () => new SimpleExtractor(0.6).extract(out.stdout, 1).quotes.length);
+  assert.ok(counts.every((c) => c === counts[0]), "same log always yields the same quote set");
+  assert.ok(counts[0] > 0, "a sub-unit fidelity still keeps evidence");
+  assert.equal(new SimpleExtractor(0).extract(out.stdout, 1).quotes.length, 0);
+});
+
+test("Reducer only reduces the exact tool allowlist, not name prefixes", () => {
+  const reducer = new EvidencePreservingReducer({ thresholdBytes: 1000 });
+  for (const tool of ["testing", "npm-audit", "cargo-lint", "cat", "grep"]) {
+    reducer.transformResult(bigResult(6000, `call_${tool}`, tool), fakeCtx(1));
+  }
+  assert.equal(reducer.stats.reduced, 0, "prefix-adjacent names are not build/test logs");
+  for (const tool of ["test", "pytest", "npm", "build", "cargo"]) {
+    reducer.transformResult(bigResult(6000, `call_${tool}`, tool), fakeCtx(1));
+  }
+  assert.equal(reducer.stats.reduced, 5, "the allowlisted tool names reduce");
+});
+
 /* ---------------- Online Context Compact ---------------- */
 
 test("cost gate compares projected savings against the cache-rewrite cost", () => {

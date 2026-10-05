@@ -3,6 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="description" content="Visual explainer for SoL-Pi: a framework that discovers token-efficient agent-harness mechanisms through a gated auto-research loop.">
 <title>SoL-Pi — Auto-Research Loop Explainer</title>
 <style>
   :root {
@@ -33,6 +34,8 @@
     --danger: #cf222e;
     --purple: #8250df;
   }
+  html[data-theme="dark"] { color-scheme: dark; }
+  html[data-theme="light"] { color-scheme: light; }
   * { box-sizing: border-box; }
   body {
     margin: 0;
@@ -80,11 +83,16 @@
     background: var(--bg-soft); border: 1px solid var(--border);
     border-radius: 12px; padding: 22px; position: relative;
   }
-  .flow { display: flex; align-items: stretch; gap: 0; flex-wrap: wrap; }
+  .flow { display: flex; align-items: stretch; gap: 0; flex-wrap: wrap; list-style: none; margin: 0; padding: 0; counter-reset: step; }
   .fnode {
     flex: 1 1 130px; min-width: 120px; background: var(--bg-soft2);
     border: 1px solid var(--border); border-radius: 9px; padding: 12px 10px;
-    text-align: center; position: relative;
+    text-align: center; position: relative; counter-increment: step;
+  }
+  .fnode::before {
+    content: counter(step); position: absolute; top: -9px; left: 10px;
+    width: 19px; height: 19px; line-height: 19px; border-radius: 50%;
+    background: var(--accent); color: var(--bg); font-size: 11px; font-family: var(--mono);
   }
   .fnode .t { font-weight: 600; font-size: 13.5px; }
   .fnode .d { font-size: 11.5px; color: var(--text-dim); margin-top: 4px; }
@@ -118,6 +126,10 @@
   html[data-theme="light"] tr.hl td { background: #e8f5ec; }
   td.good { color: var(--accent2); }
   td.bad { color: var(--danger); }
+  /* Keep the numeric columns from wrapping, and let the card scroll on narrow
+     screens instead of overflowing the page. */
+  .card { overflow-x: auto; }
+  table caption { text-align: left; padding: 6px 10px; font-size: 11.5px; color: var(--text-dim); caption-side: top; }
 
   /* ---------- bars ---------- */
   .bar-row { display: grid; grid-template-columns: 170px 1fr 78px; gap: 10px; align-items: center; margin: 7px 0; }
@@ -125,6 +137,12 @@
   .bar-track { background: var(--bg-soft2); border-radius: 5px; height: 20px; position: relative; border: 1px solid var(--border); }
   .bar-fill { height: 100%; border-radius: 4px 0 0 4px; }
   .bar-row .val { font-family: var(--mono); font-size: 12.5px; text-align: right; }
+  /* Below ~480px the fixed label and value columns would starve the bar
+     track to a few pixels; stack the label above the bar instead. */
+  @media (max-width: 480px) {
+    .bar-row { grid-template-columns: 1fr auto; }
+    .bar-row .lbl { grid-column: 1 / -1; }
+  }
 
   /* ---------- mechanism cards ---------- */
   .mech {
@@ -153,12 +171,22 @@
 <body>
 <script>
   (function () {
-    const t = new URLSearchParams(location.search).get("theme");
-    if (t === "light" || t === "dark") document.documentElement.dataset.theme = t;
-    else document.documentElement.dataset.theme = window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+    const mq = window.matchMedia("(prefers-color-scheme: light)");
+    const apply = () => {
+      const t = new URLSearchParams(location.search).get("theme");
+      if (t === "light" || t === "dark") document.documentElement.dataset.theme = t;
+      else document.documentElement.dataset.theme = mq.matches ? "light" : "dark";
+    };
+    apply();
+    // Follow the OS appearance while the tab is open, unless the reader pinned
+    // a theme with ?theme=, which stays authoritative.
+    mq.addEventListener("change", () => {
+      if (!new URLSearchParams(location.search).get("theme")) apply();
+    });
   })();
 </script>
 <div class="wrap">
+<main>
 
   <h1>SoL-Pi <span class="accent">·</span> Recursively Scaling Auto-Research Loops</h1>
   <p class="subtitle">
@@ -171,7 +199,7 @@
     <div class="stat"><div class="v">4</div><div class="k">retained mechanisms</div></div>
     <div class="stat"><div class="v">2</div><div class="k">sequential gates</div></div>
     <div class="stat"><div class="v">−49.0%</div><div class="k">paper token traffic</div></div>
-    <div class="stat"><div class="v">−79.8%</div><div class="k">prototype token cost</div></div>
+    <div class="stat"><div class="v">−96.9%</div><div class="k">prototype token cost</div></div>
   </div>
 
   <h2><span class="num">1</span>The thesis: optimize the harness, not the model</h2>
@@ -213,34 +241,36 @@
   </p>
   <div class="loop">
     <div class="lane-label">search / development — feedback allowed</div>
-    <div class="flow">
-      <div class="fnode env"><div class="t">Research<br>environments</div><div class="d">535 executable<br>task environments</div></div>
-      <div class="arrow">→</div>
-      <div class="fnode"><div class="t">Base harness<br>rollouts</div><div class="d">agent runs,<br>traces recorded</div></div>
-      <div class="arrow">→</div>
-      <div class="fnode"><div class="t">Analysis<br>&amp; proposal</div><div class="d">~152 directions<br>across 6 families</div></div>
-      <div class="arrow">→</div>
-      <div class="fnode"><div class="t">Candidate<br>implementation</div><div class="d">Ralph Loop<br>refinement</div></div>
-      <div class="arrow">→</div>
-      <div class="fnode gate"><div class="t">Capability<br>gate</div><div class="d">score within<br>fixed tolerance</div></div>
-      <div class="arrow">→</div>
-      <div class="fnode gate"><div class="t">Efficiency<br>gate</div><div class="d">≥1 declared metric<br>improves</div></div>
-    </div>
-    <div class="flow" style="margin-top:14px">
-      <div class="fnode"><div class="t">Nondominated<br>retention</div><div class="d">Pareto frontier<br>over metrics</div></div>
-      <div class="arrow">→</div>
-      <div class="fnode"><div class="t">Integration<br>into SoL-Pi</div><div class="d">combine &amp; tune<br>mechanisms</div></div>
-      <div class="arrow">→</div>
-      <div class="fnode freeze"><div class="t">FREEZE</div><div class="d">source, metrics,<br>acceptance locked</div></div>
-      <div class="arrow">→</div>
-      <div class="fnode freeze"><div class="t">Held-out<br>evaluation</div><div class="d">EdgeBench,<br>never seen in search</div></div>
-    </div>
+    <ol class="flow">
+      <li class="fnode env"><div class="t">Research<br>environments</div><div class="d">535 executable<br>task environments</div></li>
+      <li class="arrow" aria-hidden="true">→</li>
+      <li class="fnode"><div class="t">Base harness<br>rollouts</div><div class="d">agent runs,<br>traces recorded</div></li>
+      <li class="arrow" aria-hidden="true">→</li>
+      <li class="fnode"><div class="t">Analysis<br>&amp; proposal</div><div class="d">~152 directions<br>across 6 families</div></li>
+      <li class="arrow" aria-hidden="true">→</li>
+      <li class="fnode"><div class="t">Candidate<br>implementation</div><div class="d">Ralph Loop<br>refinement</div></li>
+      <li class="arrow" aria-hidden="true">→</li>
+      <li class="fnode gate"><div class="t">Capability<br>gate</div><div class="d">score within<br>fixed tolerance</div></li>
+      <li class="arrow" aria-hidden="true">→</li>
+      <li class="fnode gate"><div class="t">Efficiency<br>gate</div><div class="d">≥1 declared metric<br>improves</div></li>
+    </ol>
+    <ol class="flow" style="margin-top:14px">
+      <li class="fnode"><div class="t">Nondominated<br>retention</div><div class="d">Pareto frontier<br>over metrics</div></li>
+      <li class="arrow" aria-hidden="true">→</li>
+      <li class="fnode"><div class="t">Integration<br>into SoL-Pi</div><div class="d">combine &amp; tune<br>mechanisms</div></li>
+      <li class="arrow" aria-hidden="true">→</li>
+      <li class="fnode freeze"><div class="t">FREEZE</div><div class="d">source, metrics,<br>acceptance locked</div></li>
+      <li class="arrow" aria-hidden="true">→</li>
+      <li class="fnode freeze"><div class="t">Held-out<br>evaluation</div><div class="d">EdgeBench,<br>never seen in search</div></li>
+    </ol>
     <div class="isolation">
       <div class="t">⇄ The isolation boundary</div>
       <div style="font-size:13.5px;color:var(--text-dim)">
-        Held-out results never feed back into search. A failed validation rejects the
-        candidate outright — it does not trigger another round of optimization. This is
-        what prevents search from patching task-specific solutions into the harness.
+        Held-out results never feed back into search. The prototype enforces this with
+        <code>heldOutVerdict</code>, which re-applies both acceptance gates to the held-out
+        result and rejects the candidate on failure — a regression there is reported as a
+        failure, not as a pass. This is what prevents search from patching task-specific
+        solutions into the harness.
       </div>
     </div>
   </div>
@@ -279,7 +309,7 @@
     </p>
     <p>
       <span class="pill orange">saves 1 model round trip per edit</span>
-      <span class="pill orange">prototype: 1 fusion / run</span>
+      <span class="pill orange">prototype: 1 model-side fusion / run, 0% measured</span>
     </p>
   </div>
 
@@ -305,12 +335,13 @@
       Large tool outputs (> 10 KiB) recur in later requests long after they stop mattering.
       ObservationPack archives them locally, sends the <strong>full result for the next two
       requests</strong>, then substitutes a stable handle, the original size, and a short
-      excerpt of complete head and tail lines. The agent recalls exact pages through the
-      handle on demand.
+      excerpt of complete head and tail lines. A <code>recall_observation</code> tool serves the
+      exact original (or a 4 KiB page of it) by handle, so the instruction to recall is an
+      affordance the agent can act on.
     </p>
     <p>
-      <span class="pill green">prototype: 15 archived, 109 substitutions</span>
-      <span class="pill green">−79.8% cost on long-horizon</span>
+      <span class="pill green">prototype: 15 archived, 14 substitutions</span>
+      <span class="pill green">−79.5% cost on long-horizon</span>
     </p>
   </div>
 
@@ -326,7 +357,7 @@
     </p>
     <p>
       <span class="pill purple">deterministic verifier, 5 checks</span>
-      <span class="pill purple">fallback to exact original</span>
+      <span class="pill purple">prototype: 15 logs reduced, 1.12 MB saved</span>
     </p>
   </div>
 
@@ -335,8 +366,9 @@
   <h3 style="margin-top:26px">Paper: EdgeBench, GPT-5.6 Sol (Table 1)</h3>
   <div class="card" style="padding:6px">
     <table>
+      <caption>Paper Table 1 — EdgeBench, GPT-5.6 Sol</caption>
       <thead>
-        <tr><th>Harness</th><th>Traffic (B)</th><th>Cost ($)</th><th>Avg. score</th><th>$ / score</th></tr>
+        <tr><th scope="col">Harness</th><th scope="col">Traffic (B)</th><th scope="col">Cost ($)</th><th scope="col">Avg. score</th><th scope="col">$ / score</th></tr>
       </thead>
       <tbody>
         <tr><td>Codex</td><td>3.0537</td><td>1,787</td><td>34.74</td><td>1.0086</td></tr>
@@ -359,52 +391,69 @@
   <h3 style="margin-top:26px">Prototype: search environments, scripted backend</h3>
   <div class="card" style="padding:6px">
     <table>
+      <caption>Regenerated from <code>npm run research</code>; written to research-results.json</caption>
       <thead>
-        <tr><th>Harness</th><th>Traffic (B)</th><th>Cost ($)</th><th>Score</th><th>vs. base</th></tr>
+        <tr><th scope="col">Harness</th><th scope="col">Traffic (M)</th><th scope="col">Cost ($)</th><th scope="col">Score</th><th scope="col">vs. base</th></tr>
       </thead>
       <tbody>
-        <tr><td>pi-baseline</td><td>0.0047</td><td>9.47</td><td>1.000</td><td>—</td></tr>
-        <tr><td>+action-fusion</td><td>0.0047</td><td>9.47</td><td>1.000</td><td class="bad">−0.1%</td></tr>
-        <tr><td>+online-compact</td><td>0.0031</td><td>6.27</td><td>1.000</td><td class="good">33.7%</td></tr>
-        <tr><td>+evidence-reducer</td><td>0.0047</td><td>9.47</td><td>1.000</td><td>0.0%</td></tr>
-        <tr><td>+observation-pack</td><td>0.0009</td><td>1.91</td><td>1.000</td><td class="good">79.8%</td></tr>
-        <tr class="hl"><td>sol-pi[efficiency]</td><td>0.0009</td><td>1.92</td><td>1.000</td><td class="good">79.7%</td></tr>
-        <tr><td>sol-pi[performance]</td><td>0.0017</td><td>3.52</td><td>1.000</td><td class="good">62.8%</td></tr>
+        <tr><td>pi-baseline</td><td>4.6987</td><td>9.47</td><td>1.000</td><td>—</td></tr>
+        <tr><td>+action-fusion</td><td>4.7047</td><td>9.47</td><td>1.000</td><td class="bad">−0.1%</td></tr>
+        <tr><td>+online-compact</td><td>3.1026</td><td>6.27</td><td>1.000</td><td class="good">33.7%</td></tr>
+        <tr class="hl"><td>+evidence-reducer</td><td>0.1130</td><td>0.29</td><td>1.000</td><td class="good">96.9%</td></tr>
+        <tr><td>+observation-pack</td><td>0.9360</td><td>1.94</td><td>1.000</td><td class="good">79.5%</td></tr>
+        <tr class="hl"><td>sol-pi[efficiency]</td><td>0.2939</td><td>0.65</td><td>1.000</td><td class="good">93.1%</td></tr>
+        <tr><td>sol-pi[performance]</td><td>1.7384</td><td>3.54</td><td>1.000</td><td class="good">62.5%</td></tr>
+        <tr><td>+online-compact-tight</td><td>2.6460</td><td>5.36</td><td>1.000</td><td class="good">43.4%</td></tr>
       </tbody>
     </table>
   </div>
   <p style="font-size:12.5px;color:var(--text-dim)">
-    Same shape as the paper's results: score is preserved while cost drops sharply, and the
-    large-object mechanisms (ObservationPack, Evidence-Preserving Reducer) dominate savings on
-    log-heavy tasks. Single-mechanism effects differ because this corpus is small and the
-    backend is scripted; the paper's stack-level interaction is what its Fig. 7 analyzes.
+    Same shape as the paper's results: score is preserved at 1.000 across every harness while
+    cost drops sharply, and savings concentrate in the large-object mechanisms. Here the
+    Evidence-Preserving Reducer dominates — once it matches the log formats the environment
+    actually emits, it compresses 15 logs and saves 1.12 MB on the long-horizon task alone.
+    Two honest caveats: Action Fusion measures ~0% because this corpus's scripted policy already
+    batches the write and the run in one turn, leaving no round trip to eliminate (an earlier
+    run reported −23.6% for it, but that was missing work, not saved work). And single-mechanism
+    effects differ from the paper because this corpus is 6 environments with a scripted backend;
+    the paper's stack-level interaction is what its Fig. 7 analyzes.
   </p>
 
   <h3 style="margin-top:26px">Cost saved vs. baseline</h3>
-  <div class="card">
+  <div class="card" role="img" aria-label="Cost saved versus baseline: evidence-reducer 96.9%, sol-pi efficiency 93.1%, sol-pi performance 62.5%, observation-pack 79.5%, online-compact-tight 43.4%, online-compact 33.7%, action-fusion 0.1%.">
     <div class="bar-row">
-      <div class="lbl">+observation-pack</div>
-      <div class="bar-track"><div class="bar-fill" style="width:79.8%;background:var(--accent2)"></div></div>
-      <div class="val good" style="color:var(--accent2)">−79.8%</div>
+      <div class="lbl">+evidence-reducer</div>
+      <div class="bar-track" aria-hidden="true"><div class="bar-fill" style="width:96.9%;background:var(--accent2)"></div></div>
+      <div class="val" style="color:var(--accent2)">−96.9%</div>
     </div>
     <div class="bar-row">
       <div class="lbl">sol-pi[efficiency]</div>
-      <div class="bar-track"><div class="bar-fill" style="width:79.7%;background:var(--accent2)"></div></div>
-      <div class="val" style="color:var(--accent2)">−79.7%</div>
+      <div class="bar-track" aria-hidden="true"><div class="bar-fill" style="width:93.1%;background:var(--accent2)"></div></div>
+      <div class="val" style="color:var(--accent2)">−93.1%</div>
+    </div>
+    <div class="bar-row">
+      <div class="lbl">+observation-pack</div>
+      <div class="bar-track" aria-hidden="true"><div class="bar-fill" style="width:79.5%;background:var(--accent2)"></div></div>
+      <div class="val" style="color:var(--accent2)">−79.5%</div>
     </div>
     <div class="bar-row">
       <div class="lbl">sol-pi[performance]</div>
-      <div class="bar-track"><div class="bar-fill" style="width:62.8%;background:var(--accent2)"></div></div>
-      <div class="val" style="color:var(--accent2)">−62.8%</div>
+      <div class="bar-track" aria-hidden="true"><div class="bar-fill" style="width:62.5%;background:var(--accent2)"></div></div>
+      <div class="val" style="color:var(--accent2)">−62.5%</div>
+    </div>
+    <div class="bar-row">
+      <div class="lbl">+online-compact-tight</div>
+      <div class="bar-track" aria-hidden="true"><div class="bar-fill" style="width:43.4%;background:var(--warn)"></div></div>
+      <div class="val" style="color:var(--warn)">−43.4%</div>
     </div>
     <div class="bar-row">
       <div class="lbl">+online-compact</div>
-      <div class="bar-track"><div class="bar-fill" style="width:33.7%;background:var(--warn)"></div></div>
+      <div class="bar-track" aria-hidden="true"><div class="bar-fill" style="width:33.7%;background:var(--warn)"></div></div>
       <div class="val" style="color:var(--warn)">−33.7%</div>
     </div>
     <div class="bar-row">
       <div class="lbl">+action-fusion</div>
-      <div class="bar-track"><div class="bar-fill" style="width:0.1%;background:var(--danger);min-width:3px"></div></div>
+      <div class="bar-track" aria-hidden="true"><div class="bar-fill" style="width:0.1%;background:var(--danger);min-width:3px"></div></div>
       <div class="val" style="color:var(--danger)">−0.1%</div>
     </div>
   </div>
@@ -453,16 +502,17 @@
     transfer evidence <em>preliminary</em>.
   </div>
 
-  <div class="footer">
+  <footer class="footer">
     Prototype: <span class="mono">sol-pi/</span> in this workspace —
     <span class="mono">npm run research</span> runs the Auto-Research Loop end to end,
-    <span class="mono">npm test</span> runs 24 tests covering all four mechanisms and both gates.<br><br>
+    <span class="mono">npm test</span> runs 38 tests covering all four mechanisms and both gates.<br><br>
     Paper: Liu, Ye, Gao, Cao, Li, Zhuge, et al. <em>SoL-Pi: Recursively Scaling Auto-Research
     Loops for Efficient Agent Harness</em>, arXiv:2609.20519v1, NVIDIA / NTU / MIT, 2026.
     Prototype figures are from this workspace's simulation and are not comparable in
     magnitude to the paper's production-scale runs.
-  </div>
+  </footer>
 
+</main>
 </div>
 </body>
 </html>

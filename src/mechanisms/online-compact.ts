@@ -49,7 +49,6 @@ export class OnlineContextCompact implements Mechanism {
   private gateEvaluations = 0;
   private gatePasses = 0;
   private requestsBetweenSteps: number[] = [];
-  private stepCompletionsSeen = 0;
 
   constructor(options: OnlineCompactOptions) {
     this.options = {
@@ -65,11 +64,9 @@ export class OnlineContextCompact implements Mechanism {
 
   onPlanStepComplete(step: PlanStep, ctx: LoopContext): void {
     if (step.status !== "done") return;
-    this.stepCompletionsSeen++;
     const requests = ctx.requestsSoFar - (this.lastStepRequest ?? 0);
     this.requestsBetweenSteps.push(Math.max(1, requests));
     this.lastStepRequest = ctx.requestsSoFar;
-    void ctx;
   }
 
   private lastStepRequest = 0;
@@ -224,7 +221,6 @@ export class OnlineContextCompact implements Mechanism {
     this.gateEvaluations = 0;
     this.gatePasses = 0;
     this.requestsBetweenSteps = [];
-    this.stepCompletionsSeen = 0;
     this.lastStepRequest = 0;
     this.stepsCompletedAtLastGate = 0;
   }

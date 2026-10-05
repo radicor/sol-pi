@@ -28,7 +28,6 @@ export interface TaskSpec {
  */
 export class Environment {
   private files: Record<string, string> = {};
-  private outputLog: string[] = [];
   readonly task: TaskSpec;
 
   constructor(task: TaskSpec) {
@@ -38,11 +37,13 @@ export class Environment {
 
   reset(): void {
     this.files = { ...this.task.initialFiles };
-    this.outputLog = [];
   }
 
   readFile(path: string): string {
-    return this.files[path] ?? "";
+    // Guard against prototype-chain lookups: `files` is a plain object, so an
+    // inherited key such as "toString" would otherwise return a function
+    // typed as string and confuse every downstream consumer.
+    return Object.hasOwn(this.files, path) ? this.files[path] : "";
   }
 
   writeFile(path: string, content: string): void {
@@ -59,7 +60,6 @@ export class Environment {
   run(command: string): ToolResult {
     const id = nextCallId();
     const cmd = command.trim();
-    this.outputLog.push(cmd);
 
     if (cmd === "ls") {
       return this.ok(id, "ls", Object.keys(this.files).sort().join("\n"));
@@ -75,9 +75,10 @@ export class Environment {
       const m = rest.match(/^"([^"]+)"\s+(.+)$/);
       const pattern = m ? m[1] : rest.split(/\s+/)[0];
       const target = m ? m[2] : rest.split(/\s+/)[1];
+      if (!target) return this.fail(id, "grep", `grep: missing target file`);
       const content = this.readFile(target);
       if (!content) return this.fail(id, "grep", `grep: ${target}: No such file`);
-      const lines = content.split("\n").filter((l) => l.includes(pattern));
+      const lines = content.split("\n").filter((l) => l.includes(pattern ?? ""));
       return this.ok(id, "grep", lines.join("\n") || "(no matches)");
     }
     if (cmd === "test" || cmd.startsWith("pytest") || cmd.startsWith("npm test")) {
@@ -89,7 +90,9 @@ export class Environment {
     if (cmd.startsWith("echo ")) {
       return this.ok(id, "echo", cmd.slice(5));
     }
-    return this.fail(id, "shell", `command not found: ${cmd}`);
+    // Unknown commands report the leading word, not the full argument string,
+    // so an unsupported flag reads as an unknown command rather than noise.
+    return this.fail(id, "shell", `command not found: ${cmd.split(/\s+/)[0]}`);
   }
 
   private runTests(callId: string, cmd: string): ToolResult {
@@ -160,10 +163,6 @@ export class Environment {
     const results = this.task.tests.map((t) => t.fn(this.files));
     const passed = results.filter((r) => r.passed).length;
     return results.length === 0 ? 0 : passed / results.length;
-  }
-
-  allTestsPassed(): boolean {
-    return this.score() === 1 && this.task.tests.length > 0;
   }
 }
 

@@ -11,6 +11,19 @@ function loadScript(model: ModelBackend, steps: () => ScriptStep[]): void {
   if (typeof m.load === "function") m.load(steps());
 }
 
+/**
+ * Read a declared acceptance metric off an eval result. Validates the key
+ * rather than casting: a typo in a rule's metric name would otherwise read
+ * `undefined`, and `undefined <= 0` is false, so the gate would silently pass.
+ */
+function gateMetric(result: EvalResult, metric: string): number {
+  const value = (result as unknown as Record<string, unknown>)[metric];
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw new Error(`acceptance metric "${metric}" is not a finite number on ${result.configId}`);
+  }
+  return value;
+}
+
 
 /**
  * The search/development half of the Auto-Research Loop (paper Fig. 2).
@@ -27,7 +40,8 @@ function loadScript(model: ModelBackend, steps: () => ScriptStep[]): void {
  * nondominated results.
  *
  * The held-out benchmark is reserved for post-freeze evaluation and its
- * results never feed back into search.
+ * results never feed back into search; `heldOutVerdict` applies the same
+ * acceptance gates there so a regression rejects the candidate.
  */
 
 export interface EvalResult {
@@ -168,9 +182,13 @@ export class AutoResearchLoop {
 
   /** Gate 1: capability within the predeclared tolerance of the baseline. */
   capabilityGate(cand: EvalResult, baseline: EvalResult, rule: AcceptanceRule): { pass: boolean; reason: string } {
-    const b = (baseline as unknown as Record<string, number>)[rule.capabilityMetric];
-    const c = (cand as unknown as Record<string, number>)[rule.capabilityMetric];
-    if (b <= 0) return { pass: c >= 0, reason: "no baseline score" };
+    const b = gateMetric(baseline, rule.capabilityMetric);
+    const c = gateMetric(cand, rule.capabilityMetric);
+    // A degenerate baseline makes the tolerance meaningless: every candidate
+    // would pass, including one that solves nothing. That is precisely the
+    // optimiser-gaming hole the fixed-tolerance design exists to close, so a
+    // zero baseline aborts the gate instead of rubber-stamping candidates.
+    if (b <= 0) return { pass: false, reason: `baseline ${rule.capabilityMetric} is 0; capability gate undefined` };
     const rel = (b - c) / b;
     if (rel > rule.tolerance) {
       return { pass: false, reason: `${rule.capabilityMetric} ${c.toFixed(3)} is ${(rel * 100).toFixed(1)}% below baseline ${b.toFixed(3)} (tolerance ${(rule.tolerance * 100).toFixed(0)}%)` };
@@ -182,8 +200,8 @@ export class AutoResearchLoop {
   efficiencyGate(cand: EvalResult, baseline: EvalResult, rule: AcceptanceRule): { pass: boolean; reason: string } {
     const improved: string[] = [];
     for (const m of rule.efficiencyMetrics) {
-      const b = (baseline as unknown as Record<string, number>)[m];
-      const c = (cand as unknown as Record<string, number>)[m];
+      const b = gateMetric(baseline, m);
+      const c = gateMetric(cand, m);
       if (b <= 0) continue;
       const gain = (b - c) / b;
       if (gain >= rule.minEfficiencyGain) improved.push(`${m} -${(gain * 100).toFixed(1)}%`);
@@ -324,6 +342,46 @@ export async function heldOutEvaluation(
     total,
     traces,
   };
+}
+
+/**
+ * Apply the acceptance gates to a held-out result. The README promises that a
+ * failed validation rejects the candidate outright; this is where that
+ * promise is enforced, after the freeze.
+ */
+export function heldOutVerdict(
+  heldOut: EvalResult,
+  baseline: EvalResult,
+  acceptance: AcceptanceRule,
+): { pass: boolean; reasons: string[] } {
+  const capability = heldOutVerdictCapability(heldOut, baseline, acceptance);
+  if (!capability.pass) return { pass: false, reasons: [capability.reason] };
+  const efficiency = heldOutVerdictEfficiency(heldOut, baseline, acceptance);
+  if (!efficiency.pass) return { pass: false, reasons: [efficiency.reason] };
+  return { pass: true, reasons: [capability.reason, efficiency.reason] };
+}
+
+function heldOutVerdictCapability(heldOut: EvalResult, baseline: EvalResult, rule: AcceptanceRule) {
+  const b = gateMetric(baseline, rule.capabilityMetric);
+  const c = gateMetric(heldOut, rule.capabilityMetric);
+  if (b <= 0) return { pass: false, reason: `baseline ${rule.capabilityMetric} is 0; validation undefined` };
+  const rel = (b - c) / b;
+  return rel > rule.tolerance
+    ? { pass: false, reason: `${rule.capabilityMetric} ${(rel * 100).toFixed(1)}% below baseline on held-out tasks` }
+    : { pass: true, reason: `${rule.capabilityMetric} within tolerance` };
+}
+
+function heldOutVerdictEfficiency(heldOut: EvalResult, baseline: EvalResult, rule: AcceptanceRule) {
+  const improved: string[] = [];
+  for (const m of rule.efficiencyMetrics) {
+    const b = gateMetric(baseline, m);
+    const c = gateMetric(heldOut, m);
+    if (b <= 0) continue;
+    if ((b - c) / b >= rule.minEfficiencyGain) improved.push(`${m} -${(((b - c) / b) * 100).toFixed(1)}%`);
+  }
+  return improved.length === 0
+    ? { pass: false, reason: `no efficiency metric held its gain on held-out tasks (>= ${(rule.minEfficiencyGain * 100).toFixed(0)}%)` }
+    : { pass: true, reason: improved.join(", ") };
 }
 
 export { };

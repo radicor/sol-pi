@@ -1,0 +1,137 @@
+{
+  "acceptance": {
+    "capabilityMetric": "aggregateScore",
+    "tolerance": 0.05,
+    "efficiencyMetrics": [
+      "tokenTraffic",
+      "cost"
+    ],
+    "minEfficiencyGain": 0.05
+  },
+  "table": [
+    {
+      "id": "pi-baseline",
+      "aggregateScore": 1,
+      "tokenTraffic": 4698654,
+      "cost": 9.4653,
+      "solved": 6,
+      "total": 6,
+      "tokenEfficiency": 9.4653
+    },
+    {
+      "id": "+action-fusion",
+      "aggregateScore": 1,
+      "tokenTraffic": 4704728,
+      "cost": 9.473583999999999,
+      "solved": 6,
+      "total": 6,
+      "tokenEfficiency": 9.473583999999999
+    },
+    {
+      "id": "+online-compact",
+      "aggregateScore": 1,
+      "tokenTraffic": 3102554,
+      "cost": 6.2731,
+      "solved": 6,
+      "total": 6,
+      "tokenEfficiency": 6.2731
+    },
+    {
+      "id": "+evidence-reducer",
+      "aggregateScore": 1,
+      "tokenTraffic": 112980,
+      "cost": 0.293952,
+      "solved": 6,
+      "total": 6,
+      "tokenEfficiency": 0.293952
+    },
+    {
+      "id": "+observation-pack",
+      "aggregateScore": 1,
+      "tokenTraffic": 935982,
+      "cost": 1.9399559999999998,
+      "solved": 6,
+      "total": 6,
+      "tokenEfficiency": 1.9399559999999998
+    },
+    {
+      "id": "sol-pi[efficiency]",
+      "aggregateScore": 1,
+      "tokenTraffic": 293894,
+      "cost": 0.651916,
+      "solved": 6,
+      "total": 6,
+      "tokenEfficiency": 0.651916
+    },
+    {
+      "id": "sol-pi[performance]",
+      "aggregateScore": 1,
+      "tokenTraffic": 1738430,
+      "cost": 3.544852,
+      "solved": 6,
+      "total": 6,
+      "tokenEfficiency": 3.544852
+    },
+    {
+      "id": "+online-compact-tight",
+      "aggregateScore": 1,
+      "tokenTraffic": 2645990,
+      "cost": 5.359972,
+      "solved": 6,
+      "total": 6,
+      "tokenEfficiency": 5.359972
+    }
+  ],
+  "retained": [
+    "+evidence-reducer"
+  ],
+  "rejected": [
+    "+action-fusion"
+  ],
+  "frozen": "+evidence-reducer",
+  "heldOutPassed": true,
+  "activation": {
+    "ActionFusion": {
+      "turns": 20,
+      "tokens": 3327111,
+      "cost": 6.672182,
+      "stats": {
+        "fused": 0,
+        "modelFused": 1,
+        "total": 1
+      }
+    },
+    "ObservationPack": {
+      "turns": 21,
+      "tokens": 471012,
+      "cost": 0.960624,
+      "stats": {
+        "archived": 15,
+        "substituted": 14,
+        "recalled": 0,
+        "bytesArchived": 1132376
+      }
+    },
+    "EvidencePreservingReducer": {
+      "turns": 21,
+      "tokens": 57205,
+      "cost": 0.13301,
+      "stats": {
+        "reduced": 15,
+        "fallbacks": 0,
+        "savedBytes": 1120323
+      }
+    },
+    "OnlineContextCompact": {
+      "turns": 21,
+      "tokens": 1728169,
+      "cost": 3.474938,
+      "stats": {
+        "compactions": 3,
+        "gateEvaluations": 6,
+        "gatePasses": 3,
+        "lastRemovedTokens": 106604
+      }
+    }
+  }
+}

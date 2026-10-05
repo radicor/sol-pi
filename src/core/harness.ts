@@ -1,4 +1,4 @@
-import { Environment, summarizeResult } from "./environment.js";
+import { Environment, nextCallId, summarizeResult } from "./environment.js";
 import { ModelBackend } from "./model.js";
 import { estimateTokens, estimateJsonTokens } from "./tokens.js";
 import {
@@ -40,6 +40,12 @@ export interface Mechanism {
 
   /** Rewrite the full message list before it is sent to the model. */
   transformContext?(messages: Message[], ctx: LoopContext): Message[];
+
+  /** Serve a tool the mechanism itself contributed via transformTools. */
+  resolveTool?(name: string, args: Record<string, unknown>): ToolResult | undefined;
+
+  /** Reset per-run state; called once at the start of every run. */
+  reset?(): void;
 }
 
 export interface PlanStep {
@@ -90,6 +96,7 @@ export class Harness {
   plan: PlanStep[] = [];
   meter = new UsageMeter();
   trace: TraceEntry[] = [];
+  private notifiedStepIds = new Set<number>();
   protected systemPrompt: string;
 
   constructor(opts: HarnessOptions) {
@@ -157,14 +164,18 @@ export class Harness {
   tools(): ToolDefinition[] {
     let tools = this.baseTools();
     for (const m of this.mechanisms) if (m.transformTools) tools = m.transformTools(tools);
-    if (this.model instanceof Object && "notifySchema" in this.model) {
-      (this.model as { notifySchema: (t: ToolDefinition[]) => void }).notifySchema(tools);
-    }
     return tools;
+  }
+
+  /** Publish the current tool schema to the model. Called once per run. */
+  notifyTools(): void {
+    const m = this.model as ModelBackend & { notifySchema?: (t: ToolDefinition[]) => void };
+    if (typeof m.notifySchema === "function") m.notifySchema(this.tools());
   }
 
   async run(scriptedPlan?: PlanStep[]): Promise<RunResult> {
     this.env.reset();
+    for (const m of this.mechanisms) m.reset?.();
     this.messages = [
       { role: "system", content: this.systemPrompt },
       {
@@ -175,6 +186,12 @@ export class Harness {
     this.plan = scriptedPlan ?? this.defaultPlan();
     this.meter = new UsageMeter();
     this.trace = [];
+    this.notifiedStepIds = new Set(
+      (scriptedPlan ?? this.defaultPlan()).filter((s) => s.status === "done").map((s) => s.id),
+    );
+    // Publish the schema once, up front: tools() must stay a pure accessor so
+    // that measurement paths (toolSchemaTokens) never perturb agent behaviour.
+    this.notifyTools();
 
     let turn = 0;
     let lastResponse: ModelResponse | undefined;
@@ -214,7 +231,9 @@ export class Harness {
           compacted: false,
           note: lastResponse.stopReason,
         });
-        if (lastResponse.stopReason === "end_turn") break;
+        // No calls means no work this turn; record once and stop, regardless
+        // of the declared stop reason (end_turn, error, or max_turns).
+        break;
       }
 
       // Mechanisms may rewrite the call batch before execution (e.g. Action
@@ -248,7 +267,12 @@ export class Harness {
 
       for (const m of this.mechanisms) {
         for (const step of this.plan) {
-          if (step.status === "done") if (m.onPlanStepComplete) m.onPlanStepComplete(step, ctx);
+          if (step.status !== "done") continue;
+          // Fire only for steps that completed since the last turn; a step
+          // already announced must not re-fire and resample the interval.
+          if (this.notifiedStepIds.has(step.id)) continue;
+          this.notifiedStepIds.add(step.id);
+          if (m.onPlanStepComplete) m.onPlanStepComplete(step, ctx);
         }
       }
 
@@ -256,22 +280,31 @@ export class Harness {
       if (lastResponse.stopReason === "end_turn" && calls.length === 0) break;
     }
 
-    const success = this.env.allTestsPassed();
+    const score = this.env.score();
+    const success = score === 1 && this.env.task.tests.length > 0;
     return {
       success,
-      score: this.env.score(),
+      score,
       turns: turn,
       usage: this.meter.get(),
       cost: this.meter.cost(this.rates),
       trace: this.trace,
-      failureReason: success ? undefined : `score ${this.env.score()} after ${turn} turns`,
+      failureReason: success
+        ? undefined
+        : turn >= this.maxTurns
+          ? `max_turns exhausted (score ${score})`
+          : `incomplete (score ${score})`,
     };
   }
 
   protected executeCalls(calls: ToolCall[], ctx: LoopContext): ToolExecution[] {
     const out: ToolExecution[] = [];
     for (const call of calls) {
-      let result = this.executeOne(call);
+      // Mint the result id from the request so results correlate back to the
+      // call that produced them; duplicate literals would collide within a
+      // turn and mis-key the ObservationPack archive.
+      const callId = nextCallId();
+      let result = this.executeOne(call, callId);
       for (const m of this.mechanisms) {
         if (m.transformResult) result = m.transformResult(result, ctx);
       }
@@ -280,7 +313,7 @@ export class Harness {
     return out;
   }
 
-  protected executeOne(call: ToolCall): ToolResult {
+  protected executeOne(call: ToolCall, callId = nextCallId()): ToolResult {
     const env = this.env;
     switch (call.tool) {
       case "read_file":
@@ -288,22 +321,27 @@ export class Harness {
       case "write_file": {
         const path = String(call.args.path ?? "");
         const content = String(call.args.content ?? "");
+        const runAfter = validateThenRun(call.args.then_run);
+        const prior = env.readFile(path);
         env.writeFile(path, content);
-        const runAfter = (call.args.then_run as string[] | undefined) ?? [];
         if (runAfter.length) {
           const merged = runAfter.map((c) => env.run(c));
+          const ok = merged.every((r) => r.exitCode === 0);
+          // Roll the mutation back if any follow-up command failed, so the
+          // fused call is atomic with respect to the model's observation.
+          if (!ok) env.writeFile(path, prior);
           const stdout = `wrote ${path}\n` + merged.map((r) => summarizeResult(r)).join("\n");
           return {
-            callId: merged[0]?.callId ?? "call_fused",
+            callId: merged[0]?.callId ?? callId,
             tool: call.tool,
             stdout,
             stderr: merged.filter((r) => r.stderr).map((r) => r.stderr).join("\n"),
-            exitCode: merged.every((r) => r.exitCode === 0) ? 0 : 1,
+            exitCode: ok ? 0 : 1,
             bytes: stdout.length,
           };
         }
         return {
-          callId: "call_write",
+          callId,
           tool: call.tool,
           stdout: `wrote ${path}`,
           stderr: "",
@@ -318,7 +356,7 @@ export class Harness {
         const current = env.readFile(path);
         if (!current.includes(oldS)) {
           return {
-            callId: "call_edit",
+            callId,
             tool: call.tool,
             stdout: "",
             stderr: `edit_file: old string not found in ${path}`,
@@ -327,22 +365,25 @@ export class Harness {
             error: "old string not found",
           };
         }
-        env.writeFile(path, current.replace(oldS, newS));
-        const runAfter = (call.args.then_run as string[] | undefined) ?? [];
+        const runAfter = validateThenRun(call.args.then_run);
+        const applied = current.replace(oldS, newS);
+        env.writeFile(path, applied);
         if (runAfter.length) {
           const merged = runAfter.map((c) => env.run(c));
+          const ok = merged.every((r) => r.exitCode === 0);
+          if (!ok) env.writeFile(path, current);
           const stdout = `edited ${path}\n` + merged.map((r) => summarizeResult(r)).join("\n");
           return {
-            callId: merged[0]?.callId ?? "call_fused",
+            callId: merged[0]?.callId ?? callId,
             tool: call.tool,
             stdout,
             stderr: merged.filter((r) => r.stderr).map((r) => r.stderr).join("\n"),
-            exitCode: merged.every((r) => r.exitCode === 0) ? 0 : 1,
+            exitCode: ok ? 0 : 1,
             bytes: stdout.length,
           };
         }
         return {
-          callId: "call_edit",
+          callId,
           tool: call.tool,
           stdout: `edited ${path}`,
           stderr: "",
@@ -353,10 +394,21 @@ export class Harness {
       case "run":
         return env.run(String(call.args.command ?? ""));
       case "update_plan": {
-        const steps = (call.args.steps as PlanStep[]) ?? [];
-        if (steps.length) this.plan = steps;
+        const validated = validatePlanSteps(call.args.steps);
+        if (!validated.ok) {
+          return {
+            callId,
+            tool: call.tool,
+            stdout: "",
+            stderr: validated.error,
+            exitCode: 1,
+            bytes: 0,
+            error: validated.error,
+          };
+        }
+        this.plan = validated.steps;
         return {
-          callId: "call_plan",
+          callId,
           tool: call.tool,
           stdout: `plan updated: ${this.plan.length} steps (${this.plan.filter((s) => s.status === "done").length} done)`,
           stderr: "",
@@ -364,9 +416,15 @@ export class Harness {
           bytes: 24,
         };
       }
-      default:
+      default: {
+        // Mechanisms may contribute their own tools (e.g. recall_observation);
+        // only fall back to "unknown tool" if none of them claims the name.
+        for (const m of this.mechanisms) {
+          const resolved = m.resolveTool?.(call.tool, call.args);
+          if (resolved) return resolved;
+        }
         return {
-          callId: "call_unknown",
+          callId,
           tool: call.tool,
           stdout: "",
           stderr: `unknown tool: ${call.tool}`,
@@ -374,6 +432,7 @@ export class Harness {
           bytes: 0,
           error: "unknown tool",
         };
+      }
     }
   }
 
@@ -393,6 +452,46 @@ export class Harness {
   toolSchemaTokens(): number {
     return this.tools().reduce((n, t) => n + estimateJsonTokens(t) + 8, 0);
   }
+}
+
+const PLAN_STATUSES = ["pending", "in_progress", "done"] as const;
+type PlanStatus = (typeof PLAN_STATUSES)[number];
+
+function asPlanStatus(value: unknown): PlanStatus | undefined {
+  return PLAN_STATUSES.includes(value as PlanStatus) ? (value as PlanStatus) : undefined;
+}
+
+/**
+ * Validate model-supplied `then_run` at the trust boundary. A cast would
+ * compile while asserting nothing; a bare string or a numeric entry would
+ * otherwise crash the run deep inside the shell.
+ */
+function validateThenRun(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.filter((c): c is string => typeof c === "string").map((c) => c.trim()).filter((c) => c.length > 0);
+}
+
+/**
+ * Validate model-supplied plan steps before they reach `Harness.plan`. The
+ * plan is read by every mechanism, so a malformed value is a poisoned-state
+ * bug: it would crash one turn later, far from the cause.
+ */
+function validatePlanSteps(raw: unknown): { ok: true; steps: PlanStep[] } | { ok: false; error: string } {
+  if (!Array.isArray(raw)) return { ok: false, error: "update_plan: steps must be an array" };
+  const steps: PlanStep[] = [];
+  for (const s of raw) {
+    if (typeof s !== "object" || s === null) return { ok: false, error: "update_plan: step must be an object" };
+    const id = (s as { id?: unknown }).id;
+    const title = (s as { title?: unknown }).title;
+    const status = asPlanStatus((s as { status?: unknown }).status);
+    if (typeof id !== "number" || !Number.isFinite(id)) return { ok: false, error: "update_plan: step.id must be a number" };
+    if (typeof title !== "string") return { ok: false, error: "update_plan: step.title must be a string" };
+    if (!status) {
+      return { ok: false, error: `update_plan: step.status must be one of ${PLAN_STATUSES.join(", ")}` };
+    }
+    steps.push({ id, title, status });
+  }
+  return { ok: true, steps };
 }
 
 export { zeroUsage, addUsage };

@@ -1,4 +1,4 @@
-import { Mechanism, PlanStep, LoopContext } from "../core/harness.js";
+import { Mechanism, LoopContext } from "../core/harness.js";
 import { ToolCall, ToolDefinition, ToolResult } from "../core/types.js";
 
 /**
@@ -23,6 +23,7 @@ export class ActionFusion implements Mechanism {
   readonly description =
     "Combine a file mutation with its follow-up command into one tool request, returning both outcomes in a single observation.";
   private fused = 0;
+  private modelFused = 0;
   private options: ActionFusionOptions;
 
   constructor(options: ActionFusionOptions = {}) {
@@ -51,6 +52,14 @@ export class ActionFusion implements Mechanism {
   }
 
   transformCalls(calls: ToolCall[], _ctx: LoopContext): ToolCall[] {
+    // A call may already carry then_run if the model used the fused schema
+    // itself (the model-side half of Action Fusion). Count it: a round trip
+    // was eliminated either way, and the stat should reflect the mechanism's
+    // effect rather than only the harness-side merge.
+    for (const c of calls) {
+      if (Array.isArray(c.args.then_run) && c.args.then_run.length > 0) this.modelFused++;
+    }
+
     if (calls.length < 2) return calls;
     const [a, b] = calls;
     const isMutation = a.tool === "write_file" || a.tool === "edit_file";
@@ -71,18 +80,15 @@ export class ActionFusion implements Mechanism {
   }
 
   get fusedCount(): number {
-    return this.fused;
+    return this.fused + this.modelFused;
   }
 
   get stats() {
-    return { fused: this.fused };
+    return { fused: this.fused, modelFused: this.modelFused, total: this.fused + this.modelFused };
   }
 
   reset(): void {
     this.fused = 0;
+    this.modelFused = 0;
   }
-}
-
-export function planStep(plan: PlanStep[], id: number): PlanStep | undefined {
-  return plan.find((s) => s.id === id);
 }

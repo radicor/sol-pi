@@ -1,6 +1,6 @@
 import { headTailCompleteLines } from "../core/tokens.js";
 import { LoopContext, Mechanism } from "../core/harness.js";
-import { Message, ToolResult } from "../core/types.js";
+import { Message, ToolDefinition, ToolResult } from "../core/types.js";
 
 /**
  * ObservationPack (paper Sec. 2.4).
@@ -37,7 +37,7 @@ interface ArchiveEntry {
 export class ObservationPack implements Mechanism {
   readonly name = "ObservationPack";
   readonly description =
-    "Archive large tool outputs locally; send full for the first two requests, then substitute a stable handle plus a head/tail excerpt, with on-demand recall.";
+    "Archive large tool outputs locally; send full for the first two requests, then substitute a stable handle plus a head/tail excerpt, with on-demand recall through a recall_observation tool.";
 
   private archive = new Map<string, ArchiveEntry>();
   private options: Required<ObservationPackOptions>;
@@ -50,6 +50,53 @@ export class ObservationPack implements Mechanism {
       excerptBytes: options.excerptBytes ?? 1024,
       fullForRequests: options.fullForRequests ?? 2,
       receiptMarker: options.receiptMarker ?? "[RECEIPT]",
+    };
+  }
+
+  transformTools(tools: ToolDefinition[]): ToolDefinition[] {
+    // The substituted view tells the model to recall the original by handle;
+    // without a tool that promise is an affordance the agent cannot act on.
+    return [
+      ...tools,
+      {
+        name: "recall_observation",
+        description: "Recall the exact original text of an archived observation by its handle (e.g. obs:call_3). Pass a page to read a 4 KiB window.",
+        parameters: {
+          type: "object",
+          properties: {
+            handle: { type: "string", description: "The obs: handle shown in place of the archived observation." },
+            page: { type: "number", description: "Optional zero-based 4 KiB page index." },
+          },
+          required: ["handle"],
+        },
+      },
+    ];
+  }
+
+  /** Serve a recall_observation request against the archive. */
+  resolveTool(name: string, args: Record<string, unknown>): ToolResult | undefined {
+    if (name !== "recall_observation") return undefined;
+    const handle = String(args.handle ?? "");
+    const page = typeof args.page === "number" && Number.isFinite(args.page) ? Math.trunc(args.page) : undefined;
+    const body = this.recall(handle, page);
+    if (body === undefined) {
+      return {
+        callId: "recall",
+        tool: name,
+        stdout: "",
+        stderr: `recall_observation: no archived observation for handle ${handle}`,
+        exitCode: 1,
+        bytes: 0,
+        error: "unknown handle",
+      };
+    }
+    return {
+      callId: "recall",
+      tool: name,
+      stdout: body,
+      stderr: "",
+      exitCode: 0,
+      bytes: body.length,
     };
   }
 
@@ -95,7 +142,7 @@ export class ObservationPack implements Mechanism {
         ...m,
         content:
           `${entry.handle} (archived, ${entry.bytes} bytes)\n${excerpt}\n` +
-          `[recall the exact original with the handle above]`,
+          `[recall the exact original with recall_observation, passing the handle above]`,
       };
     });
     return changed ? out : messages;

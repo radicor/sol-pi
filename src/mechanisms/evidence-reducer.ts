@@ -25,11 +25,15 @@ export const RECEIPT_MARKER = "[RECEIPT]";
 export interface ReducerOptions {
   /** Only reduce outputs of at least this many bytes. Paper: 4 KiB. */
   thresholdBytes?: number;
-  /** Commands eligible for reduction. */
-  eligibleCommands?: string[];
+  /** Tool names whose results are eligible for reduction. */
+  eligibleTools?: string[];
   /** Maximum receipt size in bytes. */
   maxReceiptBytes?: number;
-  /** Simulated compression quality: probability the extractor omits a quote. */
+  /**
+   * Simulated compression quality: the fraction of evidence lines the
+   * extractor retains. Selection is deterministic (seeded by the log's own
+   * hash), so a given log always yields the same receipt.
+   */
   extractorFidelity?: number;
 }
 
@@ -55,29 +59,75 @@ export interface ExtractorModel {
 }
 
 export function hashString(s: string): string {
+  return numericHash(s).toString(16).padStart(8, "0");
+}
+
+/** FNV-1a hash as an unsigned 32-bit integer. */
+export function numericHash(s: string): number {
   let h = 0x811c9dc5;
   for (let i = 0; i < s.length; i++) {
     h ^= s.charCodeAt(i);
     h = Math.imul(h, 0x01000193);
   }
-  return (h >>> 0).toString(16).padStart(8, "0");
+  return h >>> 0;
 }
+
+/**
+ * A typed predicate identifying a line that carries evidence worth quoting.
+ *
+ * Evidence is matched against the formats `Environment` actually emits
+ * (`src/core/environment.ts`): bracketed `[dep]`/`[warn]`/`[summary]` log
+ * lines, pytest banners and tally lines, and `E …` assertion details. The
+ * rules are ordered by evidentiary value, so failure lines are quoted ahead
+ * of routine warnings when a receipt is full.
+ */
+export interface EvidenceRule {
+  readonly kind: string;
+  match(line: string): boolean;
+}
+
+export const DEFAULT_EVIDENCE_RULES: readonly EvidenceRule[] = [
+  // Failures first: these are the lines a human needs to see.
+  { kind: "failure", match: (l) => /^\s*E\s+\S/.test(l) },
+  { kind: "failure", match: (l) => /^(AssertionError|NameError|TypeError|ValueError|KeyError|Traceback)\b/.test(l.trim()) },
+  { kind: "failure", match: (l) => /\bFAILED\b/.test(l) },
+  // The pytest tally carries the pass/fail verdict for the whole run.
+  { kind: "summary", match: (l) => /^=+\s*\d+\s+(passed|failed)/.test(l) },
+  { kind: "banner", match: (l) => /^_{5,}\s*test_\S+.*_{5,}$/.test(l) },
+  { kind: "summary", match: (l) => /^\[(summary|error)\b/.test(l) },
+  // Routine warnings fill any remaining budget.
+  { kind: "warning", match: (l) => /^\[warn\]/.test(l) },
+];
 
 export class SimpleExtractor implements ExtractorModel {
   readonly id = "simple-extractor";
   private fidelity: number;
-  constructor(fidelity = 1.0) {
+  private rules: readonly EvidenceRule[];
+  constructor(fidelity = 1.0, rules: readonly EvidenceRule[] = DEFAULT_EVIDENCE_RULES) {
     this.fidelity = fidelity;
+    this.rules = rules;
   }
 
   extract(log: string, exitStatus: number): Receipt {
     const lines = log.split("\n");
-    const quotes: string[] = [];
-    const interesting = /^(\s*(_+)?[A-Za-z].*(FAILED|Error|error|assert|Expected|expected|Traceback|raise|\d+ (passed|failed))|\s*(E\s|AssertionError|NameError|TypeError|ValueError|KeyError|FAILED|PASSED)|_{5,})/;
 
-    for (const line of lines) {
-      if (interesting.test(line) && line.trim().length > 0) {
-        if (Math.random() < this.fidelity) quotes.push(line.trim());
+    // Pass the rules in priority order so the quote budget is spent on the
+    // most valuable evidence first; each rule walks the whole log once.
+    const quotes: string[] = [];
+    const keep = (line: string, index: number) => {
+      if (line.trim().length === 0) return false;
+      if (this.fidelity >= 1) return true;
+      if (this.fidelity <= 0) return false;
+      // Seed the drop decision with the log's own hash so selection is
+      // deterministic for a given log rather than a per-run PRNG draw.
+      return (numericHash(`${log}#${index}`) % 100) / 100 < this.fidelity;
+    };
+
+    for (const rule of this.rules) {
+      for (let i = 0; i < lines.length && quotes.length < 8; i++) {
+        const line = lines[i];
+        if (quotes.includes(line)) continue;
+        if (rule.match(line) && keep(line, i)) quotes.push(line.trim());
       }
       if (quotes.length >= 8) break;
     }
@@ -112,7 +162,7 @@ export class EvidencePreservingReducer implements Mechanism {
   constructor(options: ReducerOptions = {}, extractor?: ExtractorModel) {
     this.options = {
       thresholdBytes: options.thresholdBytes ?? 4 * 1024,
-      eligibleCommands: options.eligibleCommands ?? ["test", "pytest", "npm test", "build", "npm run build", "cargo build"],
+      eligibleTools: options.eligibleTools ?? ["test", "pytest", "npm", "build", "cargo"],
       maxReceiptBytes: options.maxReceiptBytes ?? 2048,
       extractorFidelity: options.extractorFidelity ?? 1.0,
     };
@@ -120,7 +170,10 @@ export class EvidencePreservingReducer implements Mechanism {
   }
 
   transformResult(result: ToolResult, _ctx: LoopContext): ToolResult {
-    const eligible = this.options.eligibleCommands.some((c) => result.tool.startsWith(c.split(/\s+/)[0]));
+    // Exact tool-name allowlist: prefix matching would route any `testing*`
+    // or `npm*` invocation through the reducer, and would misroute file
+    // reads and searches if the tool vocabulary ever grew.
+    const eligible = this.options.eligibleTools.includes(result.tool);
     if (!eligible) return result;
     if (result.bytes < this.options.thresholdBytes) return result;
 
@@ -199,5 +252,3 @@ export class EvidencePreservingReducer implements Mechanism {
     this.savedBytes = 0;
   }
 }
-
-export { estimateTokens, excerpt };
