@@ -341,7 +341,7 @@
     </p>
     <p>
       <span class="pill green">prototype: 15 archived, 14 substitutions</span>
-      <span class="pill green">−79.5% cost on long-horizon</span>
+      <span class="pill green">−85.6% cost on long-horizon</span>
     </p>
   </div>
 
@@ -470,7 +470,15 @@
     <strong>Why this matters:</strong> the mechanism code did not change between backends.
     If the gains had come from overfitting to one model's trajectory patterns, transfer
     would have collapsed. The paper's Fig. 6 shows lower trigger rates on Opus 5 with
-    efficiency still improving — the prototype's gate logs reproduce this same signature.
+    efficiency still improving.
+  </div>
+  <div class="callout" style="border-left-color:var(--danger)">
+    <strong>What this prototype does <em>not</em> show:</strong> it runs a single scripted
+    backend standing in for GPT-5.6 Sol, so it reproduces <em>none</em> of the cross-backend
+    evidence above. The transfer result belongs to the paper; this prototype measures
+    harness-layer effects with the model held constant, which is a different claim. Building
+    a genuine second backend — one whose policy actually differs, not just its id — would be
+    required to say anything about transfer here.
   </div>
 
   <h2><span class="num">7</span>The recursion, and its limits</h2>

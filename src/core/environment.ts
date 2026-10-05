@@ -57,8 +57,8 @@ export class Environment {
   }
 
   /** Simulated shell. Recognizes a small command vocabulary. */
-  run(command: string): ToolResult {
-    const id = nextCallId();
+  run(command: string, callId = nextCallId()): ToolResult {
+    const id = callId;
     const cmd = command.trim();
 
     if (cmd === "ls") {

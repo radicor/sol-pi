@@ -5,18 +5,20 @@ import { EvidencePreservingReducer, RECEIPT_MARKER, SimpleExtractor, hashString 
 import { ObservationPack } from "../src/mechanisms/observation-pack.js";
 import { OnlineContextCompact } from "../src/mechanisms/online-compact.js";
 import { Environment } from "../src/core/environment.js";
-import { Harness } from "../src/core/harness.js";
+import { Harness, LoopContext, Mechanism } from "../src/core/harness.js";
 import { ScriptedModel } from "../src/core/model.js";
 import { LONG_HORIZON_TASK, REPO_TASKS } from "../src/tasks/corpus.js";
 import { ToolResult } from "../src/core/types.js";
 
-function fakeCtx(requestsSoFar = 5) {
+function fakeCtx(requestsSoFar = 5): LoopContext {
+  const env = new Environment(REPO_TASKS[0]);
+  const harness = new Harness({ id: "probe", model: new ScriptedModel({ id: "probe" }), env });
   return {
     turn: 1,
     requestsSoFar,
-    env: new Environment(REPO_TASKS[0]),
+    env,
     plan: [],
-    harness: undefined as never,
+    harness,
   };
 }
 
@@ -105,14 +107,18 @@ test("ObservationPack archives large results and substitutes an excerpt after th
 test("ObservationPack leaves small results untouched", () => {
   const pack = new ObservationPack({ thresholdBytes: 1000 });
   const small = bigResult(100);
-  pack.transformResult(small, fakeCtx(1));
+  // Exercise the real path: projectObservation is what decides to archive.
+  const out = pack.projectObservation(small.stdout, small, fakeCtx(1));
+  assert.equal(out, small.stdout, "small results pass through unchanged");
   assert.equal(pack.stats.archived, 0);
 });
 
 test("ObservationPack skips verified receipts", () => {
   const pack = new ObservationPack({ thresholdBytes: 1000, fullForRequests: 0 });
   const receipt: ToolResult = { ...bigResult(5000), stdout: `${RECEIPT_MARKER}\nhash: abc\n` };
-  pack.transformResult(receipt, fakeCtx(1));
+  // Below threshold it would pass through anyway, so archive via the receipt path.
+  const out = pack.projectObservation(receipt.stdout, receipt, fakeCtx(1));
+  assert.equal(out, receipt.stdout, "receipts pass through unchanged");
   assert.equal(pack.stats.archived, 0, "receipts preserve verified evidence");
 });
 
@@ -234,7 +240,7 @@ test("compaction shortens the context while keeping the head and tail", () => {
 });
 
 test("Online Context Compact reduces tokens on a long-horizon run", async () => {
-  const make = async (mechs: never[]) => {
+  const make = async (mechs: Mechanism[]) => {
     const model = new ScriptedModel({ id: "m", contextWindow: 60_000 });
     const env = new Environment(LONG_HORIZON_TASK);
     const steps = buildLongScript();
@@ -243,7 +249,7 @@ test("Online Context Compact reduces tokens on a long-horizon run", async () => 
     return h.run();
   };
   const base = await make([]);
-  const withCompact = await make([new OnlineContextCompact({ contextWindow: 60_000 }) as never]);
+  const withCompact = await make([new OnlineContextCompact({ contextWindow: 60_000 })]);
   assert.ok(
     base.usage.input + base.usage.output > withCompact.usage.input + withCompact.usage.output,
     "compaction should reduce recorded traffic on a long run",

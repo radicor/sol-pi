@@ -41,8 +41,13 @@ export interface Mechanism {
   /** Rewrite the full message list before it is sent to the model. */
   transformContext?(messages: Message[], ctx: LoopContext): Message[];
 
-  /** Serve a tool the mechanism itself contributed via transformTools. */
-  resolveTool?(name: string, args: Record<string, unknown>): ToolResult | undefined;
+  /**
+   * Serve a tool the mechanism itself contributed via transformTools.
+   * `callId` is the id the harness allocated for this call; the result must
+   * carry it so mechanisms that key results by id (ObservationPack's archive)
+   * do not collide on a shared literal.
+   */
+  resolveTool?(name: string, args: Record<string, unknown>, callId: string): ToolResult | undefined;
 
   /** Reset per-run state; called once at the start of every run. */
   reset?(): void;
@@ -317,7 +322,7 @@ export class Harness {
     const env = this.env;
     switch (call.tool) {
       case "read_file":
-        return env.run(`cat ${String(call.args.path ?? "")}`);
+        return env.run(`cat ${String(call.args.path ?? "")}`, callId);
       case "write_file": {
         const path = String(call.args.path ?? "");
         const content = String(call.args.content ?? "");
@@ -392,7 +397,7 @@ export class Harness {
         };
       }
       case "run":
-        return env.run(String(call.args.command ?? ""));
+        return env.run(String(call.args.command ?? ""), callId);
       case "update_plan": {
         const validated = validatePlanSteps(call.args.steps);
         if (!validated.ok) {
@@ -420,7 +425,7 @@ export class Harness {
         // Mechanisms may contribute their own tools (e.g. recall_observation);
         // only fall back to "unknown tool" if none of them claims the name.
         for (const m of this.mechanisms) {
-          const resolved = m.resolveTool?.(call.tool, call.args);
+          const resolved = m.resolveTool?.(call.tool, call.args, callId);
           if (resolved) return resolved;
         }
         return {

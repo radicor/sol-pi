@@ -91,10 +91,16 @@
   "frozen": "+evidence-reducer",
   "heldOutPassed": true,
   "activation": {
+    "base": {
+      "turns": 21,
+      "tokens": 3323869,
+      "cost": 6.663138
+    },
     "ActionFusion": {
       "turns": 20,
       "tokens": 3327111,
       "cost": 6.672182,
+      "costSaved": -0.001357318428644394,
       "stats": {
         "fused": 0,
         "modelFused": 1,
@@ -105,6 +111,7 @@
       "turns": 21,
       "tokens": 471012,
       "cost": 0.960624,
+      "costSaved": 0.8558300908670959,
       "stats": {
         "archived": 15,
         "substituted": 14,
@@ -116,6 +123,7 @@
       "turns": 21,
       "tokens": 57205,
       "cost": 0.13301,
+      "costSaved": 0.9800379340785077,
       "stats": {
         "reduced": 15,
         "fallbacks": 0,
@@ -126,6 +134,7 @@
       "turns": 21,
       "tokens": 1728169,
       "cost": 3.474938,
+      "costSaved": 0.47848326119014795,
       "stats": {
         "compactions": 3,
         "gateEvaluations": 6,

@@ -234,6 +234,9 @@ export class AutoResearchLoop {
 
   async run(): Promise<SearchSummary> {
     const log = this.opts.log ?? (() => undefined);
+    // Fresh search log: a reused loop instance must not accumulate rounds from
+    // a previous run, the same reset semantics the harness applies per run().
+    this.generations = [];
     log(`[search] baseline = ${this.opts.baselineConfig.id}`);
     const baseline = await this.evaluate(this.opts.baselineConfig);
     this.results.set(baseline.configId, baseline);

@@ -74,14 +74,14 @@ export class ObservationPack implements Mechanism {
   }
 
   /** Serve a recall_observation request against the archive. */
-  resolveTool(name: string, args: Record<string, unknown>): ToolResult | undefined {
+  resolveTool(name: string, args: Record<string, unknown>, callId: string): ToolResult | undefined {
     if (name !== "recall_observation") return undefined;
     const handle = String(args.handle ?? "");
     const page = typeof args.page === "number" && Number.isFinite(args.page) ? Math.trunc(args.page) : undefined;
     const body = this.recall(handle, page);
     if (body === undefined) {
       return {
-        callId: "recall",
+        callId,
         tool: name,
         stdout: "",
         stderr: `recall_observation: no archived observation for handle ${handle}`,
@@ -91,7 +91,7 @@ export class ObservationPack implements Mechanism {
       };
     }
     return {
-      callId: "recall",
+      callId,
       tool: name,
       stdout: body,
       stderr: "",
@@ -161,6 +161,11 @@ export class ObservationPack implements Mechanism {
 
   has(handle: string): boolean {
     return this.archive.has(handle);
+  }
+
+  /** Live archive handles, for tests that need to recall a real entry. */
+  handles(): Iterable<string> {
+    return this.archive.keys();
   }
 
   get stats() {

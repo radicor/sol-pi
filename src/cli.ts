@@ -243,9 +243,26 @@ async function main() {
   console.log();
   console.log("=== single-task mechanism activation on the long-horizon task (paper Fig. 6 style) ===");
   const activation: Record<string, unknown> = {};
+  const task = LONG_HORIZON_TASK;
+
+  // The same task with no mechanisms, so per-mechanism deltas are read off the
+  // program's own output rather than a figure quoted by hand.
+  const baseEnv = new Environment(task);
+  const baseModel = new ScriptedModel({ id: "activation-base" });
+  loadScript(baseModel, () => scriptFor(task, { id: "base", mechanisms: [], params: {}, family: "tools", origin: "add-one" }));
+  const baseRun = new Harness({ id: "activation-base", model: baseModel, env: baseEnv, maxTurns: 40 });
+  const baseResult = await baseRun.run();
+  activation.base = {
+    turns: baseResult.turns,
+    tokens: baseResult.usage.input + baseResult.usage.output,
+    cost: baseResult.cost,
+  };
+  console.log(
+    `${"(no mechanisms)".padEnd(26)} turns=${baseResult.turns} tokens=${(baseResult.usage.input + baseResult.usage.output).toLocaleString()} cost=$${baseResult.cost.toFixed(3)}`,
+  );
+
   for (const mech of ["ActionFusion", "ObservationPack", "EvidencePreservingReducer", "OnlineContextCompact"] as const) {
     const cfg: CandidateConfig = { id: mech, mechanisms: [mech], params: {}, family: "tools", origin: "add-one" };
-    const task = LONG_HORIZON_TASK;
     const env = new Environment(task);
     loadScript(model, () => scriptFor(task, cfg));
     const h = buildHarness(cfg, { id: mech, model, env, maxTurns: 40 });
@@ -255,6 +272,7 @@ async function main() {
       turns: res.turns,
       tokens: res.usage.input + res.usage.output,
       cost: res.cost,
+      costSaved: baseResult.cost > 0 ? 1 - res.cost / baseResult.cost : undefined,
       stats: stats ?? {},
     };
     console.log(

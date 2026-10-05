@@ -8,6 +8,19 @@ import { ScriptedModel } from "../src/core/model.js";
 import { estimateTokens, headTailCompleteLines } from "../src/core/tokens.js";
 import { addUsage, usageCost, DEFAULT_RATES, zeroUsage } from "../src/core/usage.js";
 import { LONG_HORIZON_TASK, REPO_TASKS } from "../src/tasks/corpus.js";
+import { Mechanism, PlanStep } from "../src/core/harness.js";
+import { ModelBackend } from "../src/core/model.js";
+import { ModelRequest, ModelResponse, ToolCall } from "../src/core/types.js";
+
+/** A backend that stops with a reason `ScriptedModel` never emits (M-7 / L-14). */
+class StoppingModel implements ModelBackend {
+  readonly id = "stop";
+  readonly contextWindow = 200_000;
+  constructor(private stopReason: ModelResponse["stopReason"], private calls: ToolCall[] = []) {}
+  async chat(_req: ModelRequest): Promise<ModelResponse> {
+    return { usage: { input: 10, cacheRead: 0, cacheWrite: 0, output: 5 }, toolCalls: this.calls, stopReason: this.stopReason };
+  }
+}
 
 test("estimateTokens grows with text length", () => {
   assert.ok(estimateTokens("hello world") > 0);
@@ -65,9 +78,9 @@ test("harness executes a scripted trajectory and solves a task", async () => {
 
 /* ---- trust boundary: malformed model emissions must not crash the run ---- */
 
-async function runOnce(harness: Harness, calls: object[]) {
+async function runOnce(harness: Harness, calls: ToolCall[]) {
   const model = harness.model as ScriptedModel;
-  model.load([...calls.map((c) => ({ kind: "tool" as const, calls: [c as never] })), { kind: "done" as const, summary: "d" }]);
+  model.load([...calls.map((c) => ({ kind: "tool" as const, calls: [c] })), { kind: "done" as const, summary: "d" }]);
   return harness.run();
 }
 
@@ -145,17 +158,88 @@ test("mechanism state resets between runs on a reused harness", async () => {
 
 test("onPlanStepComplete fires once per newly-done step", async () => {
   const fired: number[] = [];
-  const probe = {
+  const probe: Mechanism = {
     name: "probe",
     description: "counts step completions",
-    onPlanStepComplete: (step: { id: number }) => fired.push(step.id),
+    onPlanStepComplete: (step: PlanStep) => fired.push(step.id),
     reset: () => fired.length = 0,
   };
-  const harness = new Harness({ id: "t", model: new ScriptedModel({ id: "t" }), env: new Environment(REPO_TASKS[0]), mechanisms: [probe as never], maxTurns: 6 });
+  const harness = new Harness({ id: "t", model: new ScriptedModel({ id: "t" }), env: new Environment(REPO_TASKS[0]), mechanisms: [probe], maxTurns: 6 });
   await runOnce(harness, [
     { tool: "update_plan", args: { steps: [{ id: 1, title: "a", status: "done" }, { id: 2, title: "b", status: "done" }] } },
     { tool: "update_plan", args: { steps: [{ id: 1, title: "a", status: "done" }, { id: 2, title: "b", status: "done" }] } },
     { tool: "run", args: { command: "test" } },
   ]);
   assert.deepEqual(fired, [1, 2], "each done step is announced exactly once, not once per turn");
+});
+
+test("a stop with no calls records exactly one trace entry, whatever the stop reason", async () => {
+  for (const stopReason of ["error", "max_turns", "end_turn"] as const) {
+    const env = new Environment(REPO_TASKS[0]);
+    const harness = new Harness({ id: "t", model: new StoppingModel(stopReason), env, maxTurns: 6 });
+    const res = await harness.run();
+    assert.equal(res.trace.length, 1, `${stopReason}: a no-call turn is one trace entry, not two`);
+    assert.equal(res.trace[0].note, stopReason, "the entry records why the loop stopped");
+  }
+});
+
+test("max_turns exhaustion is distinguished from an incomplete run", async () => {
+  const env = new Environment(REPO_TASKS[0]);
+  // A model that always emits a call never finishes, so the loop hits its turn budget.
+  const harness = new Harness({
+    id: "t",
+    model: new StoppingModel("tool_use", [{ tool: "run", args: { command: "test" } }]),
+    env,
+    maxTurns: 3,
+  });
+  const res = await harness.run();
+  assert.equal(res.success, false);
+  assert.equal(res.turns, 3);
+  assert.equal(res.failureReason, "max_turns exhausted (score 0)", "budget exhaustion is named, not reported as merely incomplete");
+
+  const stopping = new Harness({ id: "t", model: new StoppingModel("error"), env, maxTurns: 3 });
+  const stopped = await stopping.run();
+  assert.equal(stopped.failureReason, "incomplete (score 0)", "a run that stops early is incomplete, not budget-exhausted");
+});
+
+test("two recall_observation calls in one turn get distinct call ids", async () => {
+  const env = new Environment(LONG_HORIZON_TASK);
+  const pack = new ObservationPack({ thresholdBytes: 1000, excerptBytes: 100, fullForRequests: 0 });
+  // The handle is allocated by the harness, so read it from the archive the
+  // moment it exists rather than assuming a literal (the id counter is
+  // process-global, so `obs:call_1` is not stable across the test suite).
+  const model = new (class implements ModelBackend {
+    readonly id = "t";
+    readonly contextWindow = 200_000;
+    turn = 0;
+    async chat(_req: ModelRequest): Promise<ModelResponse> {
+      this.turn++;
+      if (this.turn === 1) {
+        return { usage: { input: 10, cacheRead: 0, cacheWrite: 0, output: 5 }, toolCalls: [{ tool: "run", args: { command: "test" } }], stopReason: "tool_use" };
+      }
+      if (this.turn === 2) {
+        const handle = [...pack.handles()][0];
+        return {
+          usage: { input: 10, cacheRead: 0, cacheWrite: 0, output: 5 },
+          toolCalls: [
+            { tool: "recall_observation", args: { handle } },
+            { tool: "recall_observation", args: { handle } },
+          ],
+          stopReason: "tool_use",
+        };
+      }
+      return { usage: { input: 10, cacheRead: 0, cacheWrite: 0, output: 5 }, stopReason: "end_turn" };
+    }
+  })();
+  const harness = new Harness({ id: "t", model, env, mechanisms: [pack], maxTurns: 4 });
+
+  const res = await harness.run();
+  assert.ok(pack.stats.archived > 0, "the large result was archived");
+  assert.equal(pack.stats.recalled, 2, "both recalls were served");
+
+  const recallTurn = res.trace.find((t) => t.results.some((r) => r.tool === "recall_observation"));
+  const ids = (recallTurn?.results ?? []).map((r) => r.callId);
+  assert.equal(ids.length, 2, "both recalls executed");
+  assert.equal(new Set(ids).size, 2, "two recalls in one turn must not share an id");
+  assert.ok(recallTurn?.results.every((r) => r.exitCode === 0), "both recalls found the archived original");
 });
