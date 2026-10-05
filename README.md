@@ -21,6 +21,20 @@ them.
 > discarded by the shell tools, an ObservationPack figure mislabelled as long-horizon, and a
 > transfer claim the prototype cannot support. [`REMEDIATION-2.md`](./REMEDIATION-2.md) is the
 > fix. The published numbers were re-frozen and diffed — they did not move.
+>
+> A third round ([`AUDIT-3.md`](./AUDIT-3.md), 2026-10-05) went after the cost model itself: the
+> ledger recorded **zero cache traffic**, so any mechanism that rewrote the context mid-stream was
+> billed as though the rewrite were free. [`REMEDIATION-3.md`](./REMEDIATION-3.md) fixes it, and
+> this time the published numbers **did** move, deliberately. Charging the rewrite shrinks the two
+> substituting mechanisms — ObservationPack 79.5% → 52.2%, Online Context Compact 33.7% → 12.3% —
+> while the Evidence-Preserving Reducer holds at ~96.8%, because it compresses a log before that
+> log reaches the context. The ordering is unchanged — the reducer still dominates — but the
+> attribution is now honest: the reducer carries the saving.
+>
+> Verification is enforced rather than trusted. `npm run check` re-runs the whole pipeline and
+> fails if the emitted `research-results.json` drifts from the committed file; `npm run
+> check-artifacts` fails if the README or the explainer drift from that file. CI runs both on
+> every push, so the numbers below cannot rot again.
 
 ```bash
 npm install
@@ -28,6 +42,8 @@ npm run research     # run the full Auto-Research Loop + held-out evaluation
 npm run demo         # search loop without the held-out stage
 npm test             # 44 tests across all mechanisms and both gates
 npm run typecheck
+npm run check        # fail if research-results.json drifts from program output
+npm run check-artifacts  # fail if README/explainer drift from research-results.json
 ```
 
 ## Layout
@@ -192,7 +208,10 @@ Three things worth flagging in these numbers:
 - The corpus is 6 search + 2 held-out environments, not 535 + EdgeBench's 51.
 - Token estimation is character/word based, not a real BPE tokenizer.
 - Cost figures use a fixed price table and are not comparable in magnitude to the paper's
-  production runs. What is comparable is the *shape*: score preserved, cost down, and
+  production runs. They do bill the prefix cache — read price for the part that repeats the
+  previous request, write price for the appended tail, full input price for anything rewritten
+  mid-context — so a mechanism that rewrites the context is charged for the invalidation, not
+  just the shorter result. What is comparable is the *shape*: score preserved, cost down, and
   savings concentrated in the large-object mechanisms.
 - The extractor model is a rule-based stand-in for GPT-5.6 Luna. Evidence is defined as a typed
   predicate over the log formats the environment actually emits (pytest banners, `E …` assertion
