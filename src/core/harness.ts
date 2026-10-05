@@ -213,9 +213,18 @@ export class Harness {
 
       // Mechanisms may rewrite the request context (compaction, archived
       // observation substitution). The rewrite persists: a compacted context
-      // becomes the context for all subsequent turns.
+      // becomes the context for all subsequent turns. Record whether one
+      // actually acted, so the trace can show which turns rewrote the context
+      // rather than claiming every turn is uncompacted.
+      let contextRewrite: { before: number; after: number } | undefined;
       for (const m of this.mechanisms) {
-        if (m.transformContext) this.messages = m.transformContext(this.messages, ctx);
+        if (!m.transformContext) continue;
+        const before = this.messages.reduce((n, msg) => n + estimateTokens(msg.content) + 4, 0);
+        const rewritten = m.transformContext(this.messages, ctx);
+        if (rewritten === this.messages) continue;
+        const after = rewritten.reduce((n, msg) => n + estimateTokens(msg.content) + 4, 0);
+        this.messages = rewritten;
+        contextRewrite = { before, after };
       }
 
       const req: ModelRequest = { messages: this.messages, tools: this.tools() };
@@ -227,14 +236,18 @@ export class Harness {
       }
 
       const rawCalls = lastResponse.toolCalls ?? [];
+      const compactedNote =
+        contextRewrite === undefined
+          ? undefined
+          : `context rewritten: ${contextRewrite.before} -> ${contextRewrite.after} tokens`;
       if (rawCalls.length === 0) {
         this.trace.push({
           turn,
-          requestTokens: lastResponse.usage.input + lastResponse.usage.output,
+          requestTokens: lastResponse.usage.input + lastResponse.usage.cacheRead + lastResponse.usage.cacheWrite,
           toolCalls: [],
           results: [],
-          compacted: false,
-          note: lastResponse.stopReason,
+          compacted: contextRewrite !== undefined,
+          note: [compactedNote, lastResponse.stopReason].filter(Boolean).join("; ") || undefined,
         });
         // No calls means no work this turn; record once and stop, regardless
         // of the declared stop reason (end_turn, error, or max_turns).
@@ -251,10 +264,13 @@ export class Harness {
 
       const traceEntry: TraceEntry = {
         turn,
-        requestTokens: lastResponse.usage.input + lastResponse.usage.output,
+        // `input` excludes the cached prefix and written delta, which are billed
+        // at their own rates; the request's full size is all three together.
+        requestTokens: lastResponse.usage.input + lastResponse.usage.cacheRead + lastResponse.usage.cacheWrite,
         toolCalls: executed.map((e) => e.call),
         results: executed.map((e) => e.result),
-        compacted: false,
+        compacted: contextRewrite !== undefined,
+        note: compactedNote,
       };
 
       for (const { call, result } of executed) {

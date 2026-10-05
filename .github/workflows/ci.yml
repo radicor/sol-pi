@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Tests
+        run: npm test
+
+      # The README and explainer are generated from research-results.json. This
+      # fails if a code change moved a published number without regenerating the
+      # artifacts — the failure mode of AUDIT.md (H-3, M-15) and AUDIT-2.md (N-2).
+      - name: Published numbers match the committed results
+        run: npm run research -- --check
+
+      # --check proves the JSON is reproducible; this proves the README and the
+      # explainer actually quote it, which is the hand-transcription drift that
+      # AUDIT-3.md (C-2, C-4) found in the published figures.
+      - name: Derived artifacts match the committed results
+        run: npm run check-artifacts

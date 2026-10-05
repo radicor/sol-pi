@@ -243,3 +243,47 @@ test("two recall_observation calls in one turn get distinct call ids", async () 
   assert.equal(new Set(ids).size, 2, "two recalls in one turn must not share an id");
   assert.ok(recallTurn?.results.every((r) => r.exitCode === 0), "both recalls found the archived original");
 });
+
+test("prefix cache accounting: a long run records cache traffic, not just input", async () => {
+  const model = new ScriptedModel({ id: "cache", contextWindow: 60_000 });
+  const env = new Environment(LONG_HORIZON_TASK);
+  // Each turn appends a build log, so every request repeats the previous one
+  // verbatim and only the tail is new — the append-only shape that exercises
+  // the prefix cache.
+  model.load([
+    ...Array.from({ length: 12 }, () => ({ kind: "tool" as const, calls: [{ tool: "run", args: { command: "build" } }] })),
+    { kind: "done" as const, summary: "done" },
+  ]);
+  const harness = new Harness({ id: "cache", model, env, maxTurns: 40 });
+  const res = await harness.run();
+
+  // A ledger that records zero cache traffic is not modelling the quantity the
+  // compaction gate optimizes.
+  assert.ok(res.usage.cacheRead > 0, "the cached prefix must be billed at the read price");
+  assert.ok(res.usage.cacheWrite > 0, "the appended tail must be billed at the write price");
+  assert.ok(
+    res.usage.cacheRead > res.usage.input,
+    "on an append-only run the cached prefix dominates the uncached share",
+  );
+});
+
+test("prefix cache accounting: an identical request bills at the read price only", async () => {
+  const model = new ScriptedModel({ id: "cache2" });
+  const req: ModelRequest = {
+    tools: [],
+    messages: [
+      { role: "system", content: "system prompt" },
+      { role: "user", content: "a question".repeat(50) },
+    ],
+  };
+
+  const first = await model.chat(req);
+  assert.equal(first.usage.cacheRead, 0, "the first request has nothing cached");
+  assert.ok(first.usage.input > 0, "the first request is billed as fresh input");
+
+  const repeat = await model.chat(req);
+  assert.equal(repeat.usage.input, 0, "a verbatim repeat is entirely cache-read, not fresh input");
+  assert.equal(repeat.usage.cacheWrite, 0, "a verbatim repeat writes nothing new");
+  assert.ok(repeat.usage.cacheRead > 0, "the repeat bills at the read price");
+});
+

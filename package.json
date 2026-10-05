@@ -7,9 +7,16 @@
     "build": "tsc",
     "demo": "tsx src/cli.ts",
     "research": "tsx src/cli.ts --research",
+    "check": "tsx src/cli.ts --research --check",
+    "check-artifacts": "node probes/check-artifacts.mjs",
     "test": "tsx --test tests/**/*.test.ts",
     "typecheck": "tsc --noEmit",
     "lint": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "26.6.4",
+    "tsx": "4.23.15",
+    "typescript": "7.0.2"
   },
   "license": "MIT"
 }

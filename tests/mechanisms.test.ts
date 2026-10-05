@@ -9,6 +9,7 @@ import { Harness, LoopContext, Mechanism } from "../src/core/harness.js";
 import { ScriptedModel } from "../src/core/model.js";
 import { LONG_HORIZON_TASK, REPO_TASKS } from "../src/tasks/corpus.js";
 import { ToolResult } from "../src/core/types.js";
+import { totalTokens } from "../src/core/usage.js";
 
 function fakeCtx(requestsSoFar = 5): LoopContext {
   const env = new Environment(REPO_TASKS[0]);
@@ -239,21 +240,43 @@ test("compaction shortens the context while keeping the head and tail", () => {
   assert.ok(out.some((m) => m.content.includes("compacted")), "middle is summarized");
 });
 
-test("Online Context Compact reduces tokens on a long-horizon run", async () => {
-  const make = async (mechs: Mechanism[]) => {
-    const model = new ScriptedModel({ id: "m", contextWindow: 60_000 });
-    const env = new Environment(LONG_HORIZON_TASK);
-    const steps = buildLongScript();
-    model.load(steps);
-    const h = new Harness({ id: "m", model, env, mechanisms: mechs, maxTurns: 40 });
-    return h.run();
-  };
-  const base = await make([]);
-  const withCompact = await make([new OnlineContextCompact({ contextWindow: 60_000 })]);
+test("Online Context Compact reduces traffic on a long-horizon run", async () => {
+  const base = await buildAndRun([]);
+  const withCompact = await buildAndRun([new OnlineContextCompact({ contextWindow: 60_000 })]);
+
+  // Traffic is the whole request volume, so it must total the cached prefix in
+  // too. Comparing `input + output` alone would invert: compaction rewrites
+  // mid-context, so its suffix bills at the fresh price and its `input` is
+  // far *higher* than the baseline's, which mostly bills at the read price.
   assert.ok(
-    base.usage.input + base.usage.output > withCompact.usage.input + withCompact.usage.output,
+    totalTokens(base.usage) > totalTokens(withCompact.usage),
     "compaction should reduce recorded traffic on a long run",
   );
+  assert.ok(base.cost > withCompact.cost, "compaction should reduce cost on a long run");
+  assert.ok(
+    withCompact.usage.input > base.usage.input,
+    "compaction invalidates the prefix cache, so its uncached input share is larger",
+  );
+});
+
+test("the trace records which turns rewrote the context, with before/after counts", async () => {
+  const base = await buildAndRun([]);
+  const withCompact = await buildAndRun([new OnlineContextCompact({ contextWindow: 60_000 })]);
+
+  assert.ok(
+    base.trace.every((t) => !t.compacted),
+    "a run with no context mechanism must mark no turn as rewritten",
+  );
+
+  const rewrites = withCompact.trace.filter((t) => t.compacted);
+  assert.ok(rewrites.length > 0, "compaction must mark the turns it rewrote");
+  for (const t of rewrites) {
+    assert.ok(t.note, "a rewritten turn must carry a note");
+    const counts = t.note!.match(/(\d+) -> (\d+) tokens/);
+    assert.ok(counts, `the note must carry before/after token counts, got "${t.note}"`);
+    const [, before, after] = counts;
+    assert.ok(Number(after) < Number(before), "a rewrite must shorten the context");
+  }
 });
 
 function buildLongScript() {
@@ -268,4 +291,12 @@ function buildLongScript() {
     steps.push({ kind: "tool", calls: [{ tool: "run", args: { command: "test" } }] });
   }
   return steps;
+}
+
+function buildAndRun(mechs: Mechanism[]) {
+  const model = new ScriptedModel({ id: "m", contextWindow: 60_000 });
+  const env = new Environment(LONG_HORIZON_TASK);
+  model.load(buildLongScript());
+  const h = new Harness({ id: "m", model, env, mechanisms: mechs, maxTurns: 40 });
+  return h.run();
 }

@@ -37,6 +37,8 @@ export class ScriptedModel implements ModelBackend {
   private outputTokensPerTurn: number;
   readonly supportsFusion: boolean;
   private seenFusionSchema = false;
+  /** Contents of the previous request, for prefix-cache accounting. */
+  private prevMessages: string[] | undefined;
 
   constructor(opts: ScriptedModelOptions, steps: ScriptStep[] = []) {
     this.id = opts.id;
@@ -55,6 +57,7 @@ export class ScriptedModel implements ModelBackend {
   reset(): void {
     this.cursor = 0;
     this.seenFusionSchema = false;
+    this.prevMessages = undefined;
   }
 
   async chat(req: ModelRequest): Promise<ModelResponse> {
@@ -62,10 +65,19 @@ export class ScriptedModel implements ModelBackend {
     const step = this.cursor < this.steps.length ? this.steps[this.cursor] : { kind: "done" as const, summary: "no script" };
     this.cursor++;
 
+    // Prefix-cache accounting. A provider bills the portion of the request that
+    // repeats the previous request verbatim at the cache-read price, the newly
+    // appended content at the cache-write price, and anything that changed
+    // mid-context (compaction, observation substitution) at the full input
+    // price. Without this the ledger records zero cache traffic, so the
+    // compaction gate optimizes a quantity the cost model never reports.
+    const { read, write, fresh } = this.cacheSplit(req);
+    this.prevMessages = req.messages.map((m) => m.content);
+
     if (step.kind === "done") {
       return {
         text: step.summary,
-        usage: this.usage(inputTokens, Math.min(this.outputTokensPerTurn, 30)),
+        usage: this.usage(inputTokens, Math.min(this.outputTokensPerTurn, 30), read, write, fresh),
         stopReason: "end_turn",
       };
     }
@@ -89,9 +101,41 @@ export class ScriptedModel implements ModelBackend {
     return {
       text: step.kind === "text" ? step.text : undefined,
       toolCalls: calls,
-      usage: this.usage(inputTokens, outTokens),
+      usage: this.usage(inputTokens, outTokens, read, write, fresh),
       stopReason: calls.length ? "tool_use" : "end_turn",
     };
+  }
+
+  /**
+   * Split a request's input into cache-read, cache-write, and fresh-token parts
+   * by comparing message contents against the previous request. The harness is
+   * append-only except when a mechanism rewrites the context, so the longest
+   * common prefix is the cacheable part and the tail beyond it is new. A message
+   * that differs from its predecessor invalidates that slot *and everything
+   * after it*, matching how a prefix cache is actually invalidated.
+   */
+  private cacheSplit(req: ModelRequest): { read: number; write: number; fresh: number } {
+    if (!this.prevMessages || this.prevMessages.length === 0) {
+      return { read: 0, write: 0, fresh: this.countInput(req) };
+    }
+    const cur = req.messages.map((m) => m.content);
+    let prefixMsgs = 0;
+    while (prefixMsgs < this.prevMessages.length && prefixMsgs < cur.length && this.prevMessages[prefixMsgs] === cur[prefixMsgs]) {
+      prefixMsgs++;
+    }
+    const read = this.prevMessages.slice(0, prefixMsgs).reduce((n, c) => n + estimateTokens(c) + 4, 0);
+    const tail = cur.slice(prefixMsgs);
+    const tailTokens = tail.reduce((n, c) => n + estimateTokens(c) + 4, 0);
+    // The tail is new content written at the cache-write price, except when a
+    // mechanism rewrote a mid-context message rather than appending — that
+    // content is uncached and bills at the full input price. Distinguish by
+    // position: if the previous request had a message here that changed, the
+    // rewrite invalidated the suffix, so bill it as fresh input.
+    const changed = prefixMsgs < this.prevMessages.length && prefixMsgs < cur.length;
+    if (changed) {
+      return { read, write: 0, fresh: tailTokens };
+    }
+    return { read, write: tailTokens, fresh: 0 };
   }
 
   /** Fuse a `write`/`edit` immediately followed by a `run` into a single call. */
@@ -118,8 +162,11 @@ export class ScriptedModel implements ModelBackend {
     return total;
   }
 
-  private usage(input: number, output: number): Usage {
-    return { input, cacheRead: 0, cacheWrite: 0, output };
+  private usage(input: number, output: number, cacheRead = 0, cacheWrite = 0, fresh = 0): Usage {
+    // `input` is the whole request; the cached prefix and written delta are
+    // billed at their own prices, so subtract them out to avoid double counting.
+    const billable = fresh || Math.max(0, input - cacheRead - cacheWrite);
+    return { input: billable, cacheRead, cacheWrite, output };
   }
 
   notifySchema(tools: ToolDefinition[]): void {

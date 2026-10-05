@@ -26,7 +26,7 @@ them.
 npm install
 npm run research     # run the full Auto-Research Loop + held-out evaluation
 npm run demo         # search loop without the held-out stage
-npm test             # 41 tests across all mechanisms and both gates
+npm test             # 44 tests across all mechanisms and both gates
 npm run typecheck
 ```
 
@@ -148,23 +148,23 @@ Captured from a real `npm run research` run; the program writes the same figures
 ```
 harness                   score       traffic(M)      cost($)       solved      tok eff       vs base cost
 ------------------------------------------------------------------------------------------------------------
-pi-baseline               1.000       4.6987          9.47          6/6         9.4653        --
-+action-fusion            1.000       4.7047          9.47          6/6         9.4736        -0.1%
-+online-compact           1.000       3.1026          6.27          6/6         6.2731        33.7%
-+evidence-reducer         1.000       0.1130          0.29          6/6         0.2940        96.9%
-+observation-pack         1.000       0.9360          1.94          6/6         1.9400        79.5%
-sol-pi[efficiency]        1.000       0.2939          0.65          6/6         0.6519        93.1%
-sol-pi[performance]       1.000       1.7384          3.54          6/6         3.5449        62.5%
-+online-compact-tight     1.000       2.6460          5.36          6/6         5.3600        43.4%
+pi-baseline               1.000       4.6957          8.10          6/6         8.1040        --
++action-fusion            1.000       4.7000          8.11          6/6         8.1103        -0.1%
++online-compact           1.000       3.0978          7.11          6/6         7.1102        12.3%
++evidence-reducer         1.000       0.1094          0.26          6/6         0.2601        96.8%
++observation-pack         1.000       0.9083          3.87          6/6         3.8728        52.2%
+sol-pi[efficiency]        1.000       0.2822          1.55          6/6         1.5496        80.9%
+sol-pi[performance]       1.000       1.7155          4.89          6/6         4.8914        39.6%
++online-compact-tight     1.000       2.6341          5.03          6/6         5.0303        37.9%
 
-[gate] +evidence-reducer      score=1.000 traffic=0.1130M cost=$0.29 -> RETAIN | aggregateScore within tolerance | tokenTraffic -97.6%, cost -96.9%
-held-out frozen   +evidence-reducer    score=1.000 solved=2/2 cost=$0.06 traffic=0.0225M
-held-out baseline pi-baseline          score=1.000 solved=2/2 cost=$1.12 traffic=0.5499M
-cost saved on held-out: 94.2%
-held-out verdict      : PASS — aggregateScore within tolerance; tokenTraffic -95.9%, cost -94.2%
+[gate] +evidence-reducer      score=1.000 traffic=0.1094M cost=$0.26 -> RETAIN | aggregateScore within tolerance | tokenTraffic -97.7%, cost -96.8%
+held-out frozen   +evidence-reducer    score=1.000 solved=2/2 cost=$0.06 traffic=0.0213M
+held-out baseline pi-baseline          score=1.000 solved=2/2 cost=$1.48 traffic=0.5487M
+cost saved on held-out: 95.7%
+held-out verdict      : PASS — aggregateScore within tolerance; tokenTraffic -96.1%, cost -95.7%
 ```
 
-Two things worth flagging in these numbers:
+Three things worth flagging in these numbers:
 
 - **Action Fusion measures ~0% here, and that is honest.** The corpus's scripted policy already
   emits the write and the run in a single turn, so there is no intermediate round trip for fusion
@@ -174,6 +174,16 @@ Two things worth flagging in these numbers:
 - **The reducer dominates** once it matches the logs the environment actually emits. It carries the
   frozen candidate on both the search and the held-out tasks, which is the paper's central
 > claim — efficiency won at the harness layer without touching the model.
+
+- **The context-substituting mechanisms look smaller than they did.** These figures bill the
+  prefix cache: each request pays the read price for the part that repeats the previous request
+  verbatim, the write price for the appended tail, and the full input price for anything a
+  mechanism rewrote mid-context. ObservationPack substitutes archived observations *in place*, so
+  every substitution invalidates the suffix that was already cached — its saving falls from 79.5%
+  to 52.2% once that rewrite is billed, and OnlineContextCompact's falls from 33.7% to 12.3%. The
+  reducer escapes the effect because it acts before the observation reaches the context at all.
+  An earlier build recorded zero cache traffic in the ledger, which made substitution look free;
+  `probes/measure-cache-prefix.ts` measures the effect directly.
 
 ## Honest differences from the paper
 

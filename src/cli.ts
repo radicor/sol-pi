@@ -2,18 +2,20 @@ import { Environment, TaskSpec } from "./core/environment.js";
 import { Harness, HarnessOptions } from "./core/harness.js";
 import { ScriptedModel, ScriptStep } from "./core/model.js";
 import { ToolCall } from "./core/types.js";
-import { DEFAULT_RATES } from "./core/usage.js";
+import { DEFAULT_RATES, totalTokens } from "./core/usage.js";
 import { SolPiConfig, buildMechanisms } from "./mechanisms/stack.js";
 import {
+  AcceptanceRule,
   AutoResearchLoop,
   CandidateConfig,
   EvalResult,
   ProposalFamily,
+  SearchSummary,
   heldOutEvaluation,
   heldOutVerdict,
 } from "./research/loop.js";
 import { HELD_OUT_ENVIRONMENTS, LONG_HORIZON_TASK, SEARCH_ENVIRONMENTS } from "./tasks/corpus.js";
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 
 /**
  * The demo drives the whole pipeline end to end:
@@ -158,9 +160,82 @@ function printTable(results: Map<string, EvalResult>): void {
   }
 }
 
+function buildResultsJson(
+  summary: SearchSummary,
+  all: Map<string, EvalResult>,
+  frozenId: string,
+  heldOutPassed: boolean,
+  acceptance: AcceptanceRule,
+  activation: Record<string, unknown>,
+): string {
+  return (
+    JSON.stringify(
+      {
+        acceptance,
+        table: [...all].map(([id, r]) => ({
+          id,
+          aggregateScore: r.aggregateScore,
+          tokenTraffic: r.tokenTraffic,
+          cost: r.cost,
+          solved: r.solved,
+          total: r.total,
+          tokenEfficiency: r.tokenEfficiency,
+        })),
+        retained: summary.retained,
+        rejected: summary.rejected,
+        frozen: frozenId,
+        heldOutPassed,
+        activation,
+      },
+      null,
+      2,
+    ) + "\n"
+  );
+}
+
+/**
+ * Compare a freshly generated results blob against the committed file contents,
+ * which the caller must capture BEFORE overwriting it. The published artifacts
+ * are generated from that file, so any divergence is a claim the program no
+ * longer backs. Structural compare on parsed values, so float formatting
+ * (1.0 vs 1) is not a spurious failure.
+ */
+function verifyCommitted(fresh: string, committedRaw: string | null): { ok: boolean; detail: string } {
+  if (committedRaw === null) return { ok: false, detail: "no committed research-results.json was captured" };
+  const committed = JSON.parse(committedRaw);
+  const generated = JSON.parse(fresh);
+  const diffs = diffJson("", committed, generated);
+  if (diffs.length === 0) return { ok: true, detail: "" };
+  return {
+    ok: false,
+    detail: `${diffs.length} field(s) drifted from the committed file:\n` + diffs.slice(0, 15).map((d) => `  ${d}`).join("\n"),
+  };
+}
+
+function diffJson(path: string, a: unknown, b: unknown): string[] {
+  const out: string[] = [];
+  if (typeof a === "number" && typeof b === "number") {
+    if (Math.abs(a - b) > 1e-9) out.push(`${path || "(root)"}: ${a} -> ${b}`);
+    return out;
+  }
+  if (a === null || b === null || typeof a !== "object" || typeof b !== "object") {
+    if (a !== b) out.push(`${path || "(root)"}: ${JSON.stringify(a)} -> ${JSON.stringify(b)}`);
+    return out;
+  }
+  const ao = a as Record<string, unknown>;
+  const bo = b as Record<string, unknown>;
+  for (const k of new Set([...Object.keys(ao), ...Object.keys(bo)])) {
+    if (!(k in ao)) out.push(`${path}/${k}: missing, now ${JSON.stringify(bo[k])}`);
+    else if (!(k in bo)) out.push(`${path}/${k}: removed (was ${JSON.stringify(ao[k])})`);
+    else out.push(...diffJson(`${path}/${k}`, ao[k], bo[k]));
+  }
+  return out;
+}
+
 async function main() {
   const args = process.argv.slice(2);
   const doResearch = args.includes("--research");
+  const checkMode = args.includes("--check");
 
   const model = new ScriptedModel({ id: "gpt-5.6-sol", contextWindow: 200_000, outputTokensPerTurn: 60 });
   console.log("SoL-Pi prototype — Auto-Research Loop for harness token efficiency");
@@ -254,11 +329,11 @@ async function main() {
   const baseResult = await baseRun.run();
   activation.base = {
     turns: baseResult.turns,
-    tokens: baseResult.usage.input + baseResult.usage.output,
+    tokens: totalTokens(baseResult.usage),
     cost: baseResult.cost,
   };
   console.log(
-    `${"(no mechanisms)".padEnd(26)} turns=${baseResult.turns} tokens=${(baseResult.usage.input + baseResult.usage.output).toLocaleString()} cost=$${baseResult.cost.toFixed(3)}`,
+    `${"(no mechanisms)".padEnd(26)} turns=${baseResult.turns} tokens=${totalTokens(baseResult.usage).toLocaleString()} cost=$${baseResult.cost.toFixed(3)}`,
   );
 
   for (const mech of ["ActionFusion", "ObservationPack", "EvidencePreservingReducer", "OnlineContextCompact"] as const) {
@@ -270,44 +345,35 @@ async function main() {
     const stats = (h.mechanisms[0] as unknown as { stats?: Record<string, number> }).stats;
     activation[mech] = {
       turns: res.turns,
-      tokens: res.usage.input + res.usage.output,
+      tokens: totalTokens(res.usage),
       cost: res.cost,
       costSaved: baseResult.cost > 0 ? 1 - res.cost / baseResult.cost : undefined,
       stats: stats ?? {},
     };
     console.log(
-      `${mech.padEnd(26)} turns=${res.turns} tokens=${(res.usage.input + res.usage.output).toLocaleString()} cost=$${res.cost.toFixed(3)} stats=${JSON.stringify(stats ?? {})}`,
+      `${mech.padEnd(26)} turns=${res.turns} tokens=${totalTokens(res.usage).toLocaleString()} cost=$${res.cost.toFixed(3)} stats=${JSON.stringify(stats ?? {})}`,
     );
   }
 
   // Emit every published number from the program itself, so the README and the
-  // explainer are regenerated rather than hand-transcribed.
-  writeFileSync(
-    "research-results.json",
-    JSON.stringify(
-      {
-        acceptance,
-        table: [...all].map(([id, r]) => ({
-          id,
-          aggregateScore: r.aggregateScore,
-          tokenTraffic: r.tokenTraffic,
-          cost: r.cost,
-          solved: r.solved,
-          total: r.total,
-          tokenEfficiency: r.tokenEfficiency,
-        })),
-        retained: summary.retained,
-        rejected: summary.rejected,
-        frozen: frozenId,
-        heldOutPassed,
-        activation,
-      },
-      null,
-      2,
-    ) + "\n",
-  );
+  // explainer are regenerated rather than hand-transcribed. In --check mode the
+  // committed file is captured BEFORE this write, otherwise the run would
+  // compare its own fresh output against itself and never detect drift.
+  const committedRaw = checkMode ? readFileSync("research-results.json", "utf8") : null;
+  const results = buildResultsJson(summary, all, frozenId, heldOutPassed, acceptance, activation);
+  writeFileSync("research-results.json", results);
   console.log();
   console.log("wrote research-results.json (the single source for published numbers)");
+
+  if (checkMode) {
+    const verdict = verifyCommitted(results, committedRaw);
+    if (!verdict.ok) {
+      console.error(`check FAILED: ${verdict.detail}`);
+      process.exitCode = 3;
+      return;
+    }
+    console.log("check: research-results.json matches the committed file");
+  }
 
   if (!heldOutPassed) {
     console.error("held-out validation failed; rejecting the frozen candidate");
