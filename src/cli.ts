@@ -1,4 +1,4 @@
-import { Environment, TaskSpec } from "./core/environment.js";
+import { SimulatedEnvironment, TaskSpec } from "./core/environment.js";
 import { Harness, HarnessOptions } from "./core/harness.js";
 import { ScriptedModel, ScriptStep } from "./core/model.js";
 import { ToolCall } from "./core/types.js";
@@ -322,7 +322,7 @@ async function main() {
 
   // The same task with no mechanisms, so per-mechanism deltas are read off the
   // program's own output rather than a figure quoted by hand.
-  const baseEnv = new Environment(task);
+  const baseEnv = new SimulatedEnvironment(task);
   const baseModel = new ScriptedModel({ id: "activation-base" });
   loadScript(baseModel, () => scriptFor(task, { id: "base", mechanisms: [], params: {}, family: "tools", origin: "add-one" }));
   const baseRun = new Harness({ id: "activation-base", model: baseModel, env: baseEnv, maxTurns: 40 });
@@ -338,7 +338,7 @@ async function main() {
 
   for (const mech of ["ActionFusion", "ObservationPack", "EvidencePreservingReducer", "OnlineContextCompact"] as const) {
     const cfg: CandidateConfig = { id: mech, mechanisms: [mech], params: {}, family: "tools", origin: "add-one" };
-    const env = new Environment(task);
+    const env = new SimulatedEnvironment(task);
     loadScript(model, () => scriptFor(task, cfg));
     const h = buildHarness(cfg, { id: mech, model, env, maxTurns: 40 });
     const res = await h.run();

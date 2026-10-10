@@ -1,6 +1,6 @@
 import { TaskSpec } from "../core/environment.js";
 import { ModelBackend, ScriptStep } from "../core/model.js";
-import { Environment } from "../core/environment.js";
+import { SimulatedEnvironment } from "../core/environment.js";
 import { Harness, HarnessOptions } from "../core/harness.js";
 import { RunResult, TraceEntry } from "../core/types.js";
 import { CostRates, DEFAULT_RATES, Usage, addUsage, totalTokens, usageCost, zeroUsage } from "../core/usage.js";
@@ -144,7 +144,7 @@ export class AutoResearchLoop {
     let usage = zeroUsage();
 
     for (const task of this.opts.tasks) {
-      const env = new Environment(task);
+      const env = new SimulatedEnvironment(task);
       loadScript(this.opts.model, () => this.opts.scriptFor(task, config, this.opts.model));
       const harness = this.opts.buildHarness(config, {
         id: config.id,
@@ -319,7 +319,7 @@ export async function heldOutEvaluation(
   let usage = zeroUsage();
 
   for (const task of tasks) {
-    const env = new Environment(task);
+    const env = new SimulatedEnvironment(task);
     loadScript(model, () => scriptFor(task, config, model));
     const harness = buildHarness(config, { id: config.id, model, env, maxTurns, rates });
     const res = await harness.run();

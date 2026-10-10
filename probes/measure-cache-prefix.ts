@@ -1,4 +1,4 @@
-import { Environment } from "../src/core/environment.js";
+import { SimulatedEnvironment } from "../src/core/environment.js";
 import { Harness } from "../src/core/harness.js";
 import { ScriptedModel } from "../src/core/model.js";
 import { ObservationPack } from "../src/mechanisms/observation-pack.js";
@@ -11,7 +11,7 @@ import type { ModelRequest, ModelResponse } from "../src/core/types.js";
 // True LCP in tokens between consecutive requests, so compaction (which rewrites
 // the middle) is charged for the prefix it actually invalidates.
 async function profile(label: string, mechs: unknown[]) {
-  const env = new Environment(LONG_HORIZON_TASK);
+  const env = new SimulatedEnvironment(LONG_HORIZON_TASK);
   const inner = new ScriptedModel({ id: "m", contextWindow: 60_000 });
   inner.load(buildScript());
   const reqs: string[][] = [];

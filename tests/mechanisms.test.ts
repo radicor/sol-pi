@@ -4,7 +4,7 @@ import { ActionFusion } from "../src/mechanisms/action-fusion.js";
 import { EvidencePreservingReducer, RECEIPT_MARKER, SimpleExtractor, hashString } from "../src/mechanisms/evidence-reducer.js";
 import { ObservationPack } from "../src/mechanisms/observation-pack.js";
 import { OnlineContextCompact } from "../src/mechanisms/online-compact.js";
-import { Environment } from "../src/core/environment.js";
+import { SimulatedEnvironment } from "../src/core/environment.js";
 import { Harness, LoopContext, Mechanism } from "../src/core/harness.js";
 import { ScriptedModel } from "../src/core/model.js";
 import { LONG_HORIZON_TASK, REPO_TASKS } from "../src/tasks/corpus.js";
@@ -12,7 +12,7 @@ import { ToolResult } from "../src/core/types.js";
 import { totalTokens } from "../src/core/usage.js";
 
 function fakeCtx(requestsSoFar = 5): LoopContext {
-  const env = new Environment(REPO_TASKS[0]);
+  const env = new SimulatedEnvironment(REPO_TASKS[0]);
   const harness = new Harness({ id: "probe", model: new ScriptedModel({ id: "probe" }), env });
   return {
     turn: 1,
@@ -158,13 +158,13 @@ test("Reducer bypasses file reads and search results", () => {
   assert.equal(reducer.stats.reduced, 0, "only build/test logs are eligible");
 });
 
-test("Reducer reduces the corpus's own bigLog output (regression: the extractor once matched none of it)", () => {
+test("Reducer reduces the corpus's own bigLog output (regression: the extractor once matched none of it)", async () => {
   // The shipped corpus emits bracketed `[dep]`/`[warn]`/`[summary]` lines, and
   // the original evidence regex required a line-start letter, so every log
   // produced zero quotes and the verifier fell back unconditionally. This test
   // asserts the reducer actually reduces what the environment generates.
-  const env = new Environment(REPO_TASKS[0]);
-  const out = env.run("test");
+  const env = new SimulatedEnvironment(REPO_TASKS[0]);
+  const out = await env.run("test");
   const reducer = new EvidencePreservingReducer({ thresholdBytes: 1000 });
   const result = reducer.transformResult(out, fakeCtx(1));
 
@@ -179,18 +179,18 @@ test("Reducer reduces the corpus's own bigLog output (regression: the extractor 
   assert.equal(again.stdout, result.stdout, "identical logs yield identical receipts");
 });
 
-test("Reducer selects failure evidence ahead of routine warnings", () => {
-  const env = new Environment(REPO_TASKS[0]);
-  const out = env.run("test");
+test("Reducer selects failure evidence ahead of routine warnings", async () => {
+  const env = new SimulatedEnvironment(REPO_TASKS[0]);
+  const out = await env.run("test");
   const receipt = new SimpleExtractor(1.0).extract(out.stdout, 1);
   const kinds = receipt.quotes.map((q) => q.slice(0, 30));
   assert.ok(kinds.some((q) => /AssertionError/.test(q)), "the assertion is quoted");
   assert.ok(kinds.some((q) => /passed|failed/.test(q)), "the tally line is quoted");
 });
 
-test("Reducer applies the fidelity knob deterministically", () => {
-  const env = new Environment(REPO_TASKS[0]);
-  const out = env.run("test");
+test("Reducer applies the fidelity knob deterministically", async () => {
+  const env = new SimulatedEnvironment(REPO_TASKS[0]);
+  const out = await env.run("test");
   const counts = Array.from({ length: 4 }, () => new SimpleExtractor(0.6).extract(out.stdout, 1).quotes.length);
   assert.ok(counts.every((c) => c === counts[0]), "same log always yields the same quote set");
   assert.ok(counts[0] > 0, "a sub-unit fidelity still keeps evidence");
@@ -295,7 +295,7 @@ function buildLongScript() {
 
 function buildAndRun(mechs: Mechanism[]) {
   const model = new ScriptedModel({ id: "m", contextWindow: 60_000 });
-  const env = new Environment(LONG_HORIZON_TASK);
+  const env = new SimulatedEnvironment(LONG_HORIZON_TASK);
   model.load(buildLongScript());
   const h = new Harness({ id: "m", model, env, mechanisms: mechs, maxTurns: 40 });
   return h.run();

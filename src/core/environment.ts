@@ -22,11 +22,29 @@ export interface TaskSpec {
 }
 
 /**
+ * The contract the harness depends on. Structural typing means the simulated
+ * world and the ACP backends (local execution, client delegation) all satisfy
+ * it without a shared base class.
+ *
+ * `run`, `readFile`, and `writeFile` are async because the ACP backends
+ * round-trip to a client or a subprocess. The simulated implementation
+ * resolves synchronously in effect.
+ */
+export interface Environment {
+  readonly task: TaskSpec;
+  reset(): void | Promise<void>;
+  readFile(path: string): Promise<string>;
+  writeFile(path: string, content: string): Promise<void>;
+  run(command: string, callId?: string): Promise<ToolResult>;
+  score(): number;
+}
+
+/**
  * A minimal but real agent environment: an in-process virtual repo with a
  * filesystem, a shell, and a test runner. Agents mutate it through tools;
  * the harness measures the token traffic those interactions generate.
  */
-export class Environment {
+export class SimulatedEnvironment implements Environment {
   private files: Record<string, string> = {};
   readonly task: TaskSpec;
 
@@ -39,25 +57,19 @@ export class Environment {
     this.files = { ...this.task.initialFiles };
   }
 
-  readFile(path: string): string {
+  async readFile(path: string): Promise<string> {
     // Guard against prototype-chain lookups: `files` is a plain object, so an
     // inherited key such as "toString" would otherwise return a function
     // typed as string and confuse every downstream consumer.
     return Object.hasOwn(this.files, path) ? this.files[path] : "";
   }
 
-  writeFile(path: string, content: string): void {
+  async writeFile(path: string, content: string): Promise<void> {
     this.files[path] = content;
   }
 
-  applyEdits(edits: Record<string, string>): void {
-    for (const [path, content] of Object.entries(edits)) {
-      this.files[path] = content;
-    }
-  }
-
   /** Simulated shell. Recognizes a small command vocabulary. */
-  run(command: string, callId = nextCallId()): ToolResult {
+  async run(command: string, callId = nextCallId()): Promise<ToolResult> {
     const id = callId;
     const cmd = command.trim();
 
@@ -66,7 +78,7 @@ export class Environment {
     }
     if (cmd.startsWith("cat ")) {
       const path = cmd.slice(4).trim();
-      const content = this.readFile(path);
+      const content = await this.readFile(path);
       if (!content) return this.fail(id, "cat", `cat: ${path}: No such file`);
       return this.ok(id, "cat", content);
     }
@@ -76,7 +88,7 @@ export class Environment {
       const pattern = m ? m[1] : rest.split(/\s+/)[0];
       const target = m ? m[2] : rest.split(/\s+/)[1];
       if (!target) return this.fail(id, "grep", `grep: missing target file`);
-      const content = this.readFile(target);
+      const content = await this.readFile(target);
       if (!content) return this.fail(id, "grep", `grep: ${target}: No such file`);
       const lines = content.split("\n").filter((l) => l.includes(pattern ?? ""));
       return this.ok(id, "grep", lines.join("\n") || "(no matches)");

@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { AutoResearchLoop, CandidateConfig, EvalResult, ProposalFamily } from "../src/research/loop.js";
 import { ScriptedModel, ScriptStep } from "../src/core/model.js";
 import { Harness, HarnessOptions } from "../src/core/harness.js";
-import { Environment } from "../src/core/environment.js";
+import { SimulatedEnvironment } from "../src/core/environment.js";
 import { buildMechanisms, MechanismName } from "../src/mechanisms/stack.js";
 import { REPO_TASKS } from "../src/tasks/corpus.js";
 

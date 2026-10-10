@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { Environment } from "../src/core/environment.js";
+import { SimulatedEnvironment } from "../src/core/environment.js";
 import { ActionFusion } from "../src/mechanisms/action-fusion.js";
 import { ObservationPack } from "../src/mechanisms/observation-pack.js";
 import { Harness } from "../src/core/harness.js";
@@ -46,18 +46,18 @@ test("usage accounting is additive and priced", () => {
   assert.ok(cost > 0);
 });
 
-test("environment test fails before the fix and passes after", () => {
+test("environment test fails before the fix and passes after", async () => {
   const task = REPO_TASKS[0]; // add() returns a - b
-  const env = new Environment(task);
+  const env = new SimulatedEnvironment(task);
   assert.equal(env.score(), 0, "pre-fix repo fails the hidden regression test");
-  env.writeFile("math_utils.py", "def add(a, b):\n    return a + b\n");
+  await env.writeFile("math_utils.py", "def add(a, b):\n    return a + b\n");
   assert.equal(env.score(), 1, "post-fix repo passes");
 });
 
 test("harness executes a scripted trajectory and solves a task", async () => {
   const task = REPO_TASKS[0];
   const model = new ScriptedModel({ id: "t" });
-  const env = new Environment(task);
+  const env = new SimulatedEnvironment(task);
   model.load([
     { kind: "tool", calls: [{ tool: "read_file", args: { path: "math_utils.py" } }] },
     {
@@ -86,7 +86,7 @@ async function runOnce(harness: Harness, calls: ToolCall[]) {
 
 test("a malformed then_run yields an error result, not a crash", async () => {
   for (const bad of [{ tool: "write_file", args: { path: "math_utils.py", content: "x = 1\n", then_run: "test" } }, { tool: "write_file", args: { path: "math_utils.py", content: "x = 1\n", then_run: [123] } }]) {
-    const env = new Environment(REPO_TASKS[0]);
+    const env = new SimulatedEnvironment(REPO_TASKS[0]);
     const harness = new Harness({ id: "t", model: new ScriptedModel({ id: "t" }), env, mechanisms: [new ActionFusion()], maxTurns: 3 });
     const res = await runOnce(harness, [bad]);
     assert.equal(res.success, false, "a malformed then_run does not take the run down with it");
@@ -95,7 +95,7 @@ test("a malformed then_run yields an error result, not a crash", async () => {
 
 test("a malformed update_plan yields an error result, not a poisoned plan", async () => {
   for (const bad of [{ tool: "update_plan", args: { steps: "not-an-array" } }, { tool: "update_plan", args: { steps: [{ id: "x", title: 1, status: "nope" }] } }]) {
-    const env = new Environment(REPO_TASKS[0]);
+    const env = new SimulatedEnvironment(REPO_TASKS[0]);
     const harness = new Harness({ id: "t", model: new ScriptedModel({ id: "t" }), env, maxTurns: 4 });
     const res = await runOnce(harness, [bad, { tool: "run", args: { command: "test" } }]);
     assert.equal(res.success, false);
@@ -105,7 +105,7 @@ test("a malformed update_plan yields an error result, not a poisoned plan", asyn
 });
 
 test("a failing fused command rolls the mutation back", async () => {
-  const env = new Environment(REPO_TASKS[0]);
+  const env = new SimulatedEnvironment(REPO_TASKS[0]);
   const harness = new Harness({ id: "t", model: new ScriptedModel({ id: "t" }), env, mechanisms: [new ActionFusion()], maxTurns: 3 });
   await runOnce(harness, [{ tool: "write_file", args: { path: "math_utils.py", content: "def add(a, b):\n    return a + b\n", then_run: ["nonexistent-cmd"] } }]);
   // The write was applied, but the fused follow-up failed, so it must be rolled back.
@@ -113,7 +113,7 @@ test("a failing fused command rolls the mutation back", async () => {
 });
 
 test("two mutations in one turn get distinct call ids", async () => {
-  const env = new Environment(REPO_TASKS[0]);
+  const env = new SimulatedEnvironment(REPO_TASKS[0]);
   const harness = new Harness({ id: "t", model: new ScriptedModel({ id: "t" }), env, maxTurns: 3 });
   const res = await runOnce(harness, [
     { tool: "write_file", args: { path: "a.py", content: "x" } },
@@ -123,16 +123,16 @@ test("two mutations in one turn get distinct call ids", async () => {
   assert.equal(new Set(ids).size, ids.length, "call ids are unique within a turn");
 });
 
-test("reading an inherited key returns an empty file, not a prototype value", () => {
-  const env = new Environment(REPO_TASKS[0]);
-  const out = env.run("cat toString");
+test("reading an inherited key returns an empty file, not a prototype value", async () => {
+  const env = new SimulatedEnvironment(REPO_TASKS[0]);
+  const out = await env.run("cat toString");
   assert.equal(out.exitCode, 1, "toString is not a file");
   assert.equal(typeof out.stdout, "string");
-  assert.equal(env.readFile("toString"), "", "no prototype-chain leak");
+  assert.equal(await env.readFile("toString"), "", "no prototype-chain leak");
 });
 
 test("recall_observation recovers an archived observation through the tool", async () => {
-  const env = new Environment(LONG_HORIZON_TASK);
+  const env = new SimulatedEnvironment(LONG_HORIZON_TASK);
   const pack = new ObservationPack({ thresholdBytes: 1000, excerptBytes: 100, fullForRequests: 0 });
   const harness = new Harness({ id: "t", model: new ScriptedModel({ id: "t" }), env, mechanisms: [pack], maxTurns: 6 });
   const tools = harness.tools();
@@ -149,7 +149,7 @@ test("recall_observation recovers an archived observation through the tool", asy
 
 test("mechanism state resets between runs on a reused harness", async () => {
   const pack = new ObservationPack({ thresholdBytes: 1000, excerptBytes: 100, fullForRequests: 0 });
-  const harness = new Harness({ id: "t", model: new ScriptedModel({ id: "t" }), env: new Environment(LONG_HORIZON_TASK), mechanisms: [pack], maxTurns: 6 });
+  const harness = new Harness({ id: "t", model: new ScriptedModel({ id: "t" }), env: new SimulatedEnvironment(LONG_HORIZON_TASK), mechanisms: [pack], maxTurns: 6 });
   for (let i = 0; i < 2; i++) {
     await runOnce(harness, [{ tool: "run", args: { command: "test" } }]);
   }
@@ -164,7 +164,7 @@ test("onPlanStepComplete fires once per newly-done step", async () => {
     onPlanStepComplete: (step: PlanStep) => fired.push(step.id),
     reset: () => fired.length = 0,
   };
-  const harness = new Harness({ id: "t", model: new ScriptedModel({ id: "t" }), env: new Environment(REPO_TASKS[0]), mechanisms: [probe], maxTurns: 6 });
+  const harness = new Harness({ id: "t", model: new ScriptedModel({ id: "t" }), env: new SimulatedEnvironment(REPO_TASKS[0]), mechanisms: [probe], maxTurns: 6 });
   await runOnce(harness, [
     { tool: "update_plan", args: { steps: [{ id: 1, title: "a", status: "done" }, { id: 2, title: "b", status: "done" }] } },
     { tool: "update_plan", args: { steps: [{ id: 1, title: "a", status: "done" }, { id: 2, title: "b", status: "done" }] } },
@@ -175,7 +175,7 @@ test("onPlanStepComplete fires once per newly-done step", async () => {
 
 test("a stop with no calls records exactly one trace entry, whatever the stop reason", async () => {
   for (const stopReason of ["error", "max_turns", "end_turn"] as const) {
-    const env = new Environment(REPO_TASKS[0]);
+    const env = new SimulatedEnvironment(REPO_TASKS[0]);
     const harness = new Harness({ id: "t", model: new StoppingModel(stopReason), env, maxTurns: 6 });
     const res = await harness.run();
     assert.equal(res.trace.length, 1, `${stopReason}: a no-call turn is one trace entry, not two`);
@@ -184,7 +184,7 @@ test("a stop with no calls records exactly one trace entry, whatever the stop re
 });
 
 test("max_turns exhaustion is distinguished from an incomplete run", async () => {
-  const env = new Environment(REPO_TASKS[0]);
+  const env = new SimulatedEnvironment(REPO_TASKS[0]);
   // A model that always emits a call never finishes, so the loop hits its turn budget.
   const harness = new Harness({
     id: "t",
@@ -203,7 +203,7 @@ test("max_turns exhaustion is distinguished from an incomplete run", async () =>
 });
 
 test("two recall_observation calls in one turn get distinct call ids", async () => {
-  const env = new Environment(LONG_HORIZON_TASK);
+  const env = new SimulatedEnvironment(LONG_HORIZON_TASK);
   const pack = new ObservationPack({ thresholdBytes: 1000, excerptBytes: 100, fullForRequests: 0 });
   // The handle is allocated by the harness, so read it from the archive the
   // moment it exists rather than assuming a literal (the id counter is
@@ -246,7 +246,7 @@ test("two recall_observation calls in one turn get distinct call ids", async () 
 
 test("prefix cache accounting: a long run records cache traffic, not just input", async () => {
   const model = new ScriptedModel({ id: "cache", contextWindow: 60_000 });
-  const env = new Environment(LONG_HORIZON_TASK);
+  const env = new SimulatedEnvironment(LONG_HORIZON_TASK);
   // Each turn appends a build log, so every request repeats the previous one
   // verbatim and only the tail is new — the append-only shape that exercises
   // the prefix cache.

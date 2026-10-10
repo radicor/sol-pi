@@ -179,7 +179,7 @@ export class Harness {
   }
 
   async run(scriptedPlan?: PlanStep[]): Promise<RunResult> {
-    this.env.reset();
+    await this.env.reset();
     for (const m of this.mechanisms) m.reset?.();
     this.messages = [
       { role: "system", content: this.systemPrompt },
@@ -260,7 +260,7 @@ export class Harness {
       for (const m of this.mechanisms) {
         if (m.transformCalls) calls = m.transformCalls(calls, ctx);
       }
-      const executed = this.executeCalls(calls, ctx);
+      const executed = await this.executeCalls(calls, ctx);
 
       const traceEntry: TraceEntry = {
         turn,
@@ -318,14 +318,14 @@ export class Harness {
     };
   }
 
-  protected executeCalls(calls: ToolCall[], ctx: LoopContext): ToolExecution[] {
+  protected async executeCalls(calls: ToolCall[], ctx: LoopContext): Promise<ToolExecution[]> {
     const out: ToolExecution[] = [];
     for (const call of calls) {
       // Mint the result id from the request so results correlate back to the
       // call that produced them; duplicate literals would collide within a
       // turn and mis-key the ObservationPack archive.
       const callId = nextCallId();
-      let result = this.executeOne(call, callId);
+      let result = await this.executeOne(call, callId);
       for (const m of this.mechanisms) {
         if (m.transformResult) result = m.transformResult(result, ctx);
       }
@@ -334,23 +334,23 @@ export class Harness {
     return out;
   }
 
-  protected executeOne(call: ToolCall, callId = nextCallId()): ToolResult {
+  protected async executeOne(call: ToolCall, callId = nextCallId()): Promise<ToolResult> {
     const env = this.env;
     switch (call.tool) {
       case "read_file":
-        return env.run(`cat ${String(call.args.path ?? "")}`, callId);
+        return await env.run(`cat ${String(call.args.path ?? "")}`, callId);
       case "write_file": {
         const path = String(call.args.path ?? "");
         const content = String(call.args.content ?? "");
         const runAfter = validateThenRun(call.args.then_run);
-        const prior = env.readFile(path);
-        env.writeFile(path, content);
+        const prior = await env.readFile(path);
+        await env.writeFile(path, content);
         if (runAfter.length) {
-          const merged = runAfter.map((c) => env.run(c));
+          const merged = await Promise.all(runAfter.map((c) => env.run(c)));
           const ok = merged.every((r) => r.exitCode === 0);
           // Roll the mutation back if any follow-up command failed, so the
           // fused call is atomic with respect to the model's observation.
-          if (!ok) env.writeFile(path, prior);
+          if (!ok) await env.writeFile(path, prior);
           const stdout = `wrote ${path}\n` + merged.map((r) => summarizeResult(r)).join("\n");
           return {
             callId: merged[0]?.callId ?? callId,
@@ -374,7 +374,7 @@ export class Harness {
         const path = String(call.args.path ?? "");
         const oldS = String(call.args.old ?? "");
         const newS = String(call.args.new ?? "");
-        const current = env.readFile(path);
+        const current = await env.readFile(path);
         if (!current.includes(oldS)) {
           return {
             callId,
@@ -388,11 +388,11 @@ export class Harness {
         }
         const runAfter = validateThenRun(call.args.then_run);
         const applied = current.replace(oldS, newS);
-        env.writeFile(path, applied);
+        await env.writeFile(path, applied);
         if (runAfter.length) {
-          const merged = runAfter.map((c) => env.run(c));
+          const merged = await Promise.all(runAfter.map((c) => env.run(c)));
           const ok = merged.every((r) => r.exitCode === 0);
-          if (!ok) env.writeFile(path, current);
+          if (!ok) await env.writeFile(path, current);
           const stdout = `edited ${path}\n` + merged.map((r) => summarizeResult(r)).join("\n");
           return {
             callId: merged[0]?.callId ?? callId,
@@ -413,7 +413,7 @@ export class Harness {
         };
       }
       case "run":
-        return env.run(String(call.args.command ?? ""), callId);
+        return await env.run(String(call.args.command ?? ""), callId);
       case "update_plan": {
         const validated = validatePlanSteps(call.args.steps);
         if (!validated.ok) {
