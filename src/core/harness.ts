@@ -371,6 +371,7 @@ export class Harness {
         content: observation,
         name: call.tool,
         callId: result.callId,
+        args: call.args,
       };
       this.messages.push(message);
       this.emit({ type: "observation_appended", turn: this.turn, callId: result.callId, message });

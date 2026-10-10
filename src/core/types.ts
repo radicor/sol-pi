@@ -24,6 +24,10 @@ export interface Message {
   content: string;
   name?: string;
   callId?: string;
+  /** For a `tool` message, the arguments of the call it answers. The harness
+   *  never restates its own calls in the history, so a live provider needs
+   *  them here to reconstruct the assistant turn those results reply to. */
+  args?: Record<string, unknown>;
 }
 
 export interface ModelRequest {
