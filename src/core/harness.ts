@@ -465,7 +465,10 @@ export class Harness {
         const content = String(call.args.content ?? "");
         const runAfter = validateThenRun(call.args.then_run);
         const prior = await env.readFile(path);
-        await env.writeFile(path, content);
+        const written = await env.writeFile(path, content, callId);
+        // A denied or failed write is not a write; report it and stop, so the
+        // model never sees `wrote …` for a file that was never touched.
+        if (written.exitCode !== 0) return written;
         if (runAfter.length) {
           const merged = await Promise.all(runAfter.map((c) => env.run(c)));
           const ok = merged.every((r) => r.exitCode === 0);
@@ -482,14 +485,7 @@ export class Harness {
             bytes: stdout.length,
           };
         }
-        return {
-          callId,
-          tool: call.tool,
-          stdout: `wrote ${path}`,
-          stderr: "",
-          exitCode: 0,
-          bytes: `wrote ${path}`.length,
-        };
+        return written;
       }
       case "edit_file": {
         const path = String(call.args.path ?? "");
@@ -509,7 +505,8 @@ export class Harness {
         }
         const runAfter = validateThenRun(call.args.then_run);
         const applied = current.replace(oldS, newS);
-        await env.writeFile(path, applied);
+        const written = await env.writeFile(path, applied, callId);
+        if (written.exitCode !== 0) return written;
         if (runAfter.length) {
           const merged = await Promise.all(runAfter.map((c) => env.run(c)));
           const ok = merged.every((r) => r.exitCode === 0);

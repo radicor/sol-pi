@@ -29,12 +29,17 @@ export interface TaskSpec {
  * `run`, `readFile`, and `writeFile` are async because the ACP backends
  * round-trip to a client or a subprocess. The simulated implementation
  * resolves synchronously in effect.
+ *
+ * `writeFile` reports its outcome rather than returning void because a live
+ * backend's write can be denied or fail, and the harness must show the model
+ * that instead of reporting a write that never happened. The simulated world's
+ * writes never fail, so the research path is unchanged.
  */
 export interface Environment {
   readonly task: TaskSpec;
   reset(): void | Promise<void>;
   readFile(path: string): Promise<string>;
-  writeFile(path: string, content: string): Promise<void>;
+  writeFile(path: string, content: string, callId?: string): Promise<ToolResult>;
   run(command: string, callId?: string): Promise<ToolResult>;
   score(): number;
 }
@@ -64,8 +69,18 @@ export class SimulatedEnvironment implements Environment {
     return Object.hasOwn(this.files, path) ? this.files[path] : "";
   }
 
-  async writeFile(path: string, content: string): Promise<void> {
+  async writeFile(path: string, content: string, callId = nextCallId()): Promise<ToolResult> {
     this.files[path] = content;
+    // The exact result the harness built for itself before `writeFile` reported
+    // an outcome, so the research path's observations are byte-identical.
+    return {
+      callId,
+      tool: "write_file",
+      stdout: `wrote ${path}`,
+      stderr: "",
+      exitCode: 0,
+      bytes: `wrote ${path}`.length,
+    };
   }
 
   /** Simulated shell. Recognizes a small command vocabulary. */
