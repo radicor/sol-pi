@@ -67,8 +67,11 @@ is the entry point; the server is `src/agent/`.
 - **A bad configuration answers the request instead of dying.** The provider resolves on the first
   `session/new`, so a missing key returns an error the host can show its user.
 
-`probes/live-agent.mjs` sends one real prompt through the server; CI runs it only when a key is
-configured, because it is the only test that exercises the model seam against the real API.
+`probes/live-agent.mjs` sends one real prompt through the server, and `probes/host.ts` drives the
+server from the other side of a stdio pipe as a full ACP host — advertising fs and terminal, so
+the client-delegated backend runs over a real connection. CI runs the host probe offline on every
+push, and both probes live when a key is configured, because they are the only tests that exercise
+the model seam against the real API.
 
 ## Layout
 
@@ -105,7 +108,8 @@ src/
     main.ts          the stdio entry point; owns the stdout redirect
   cli.ts             demo driver and agent entry point
 tests/               unit tests + in-process and stdio ACP tests
-probes/              check-artifacts.mjs (number drift), live-agent.mjs (real model)
+probes/              check-artifacts.mjs (number drift), live-agent.mjs (real model),
+                     host.ts (a full ACP host over stdio, delegated backend)
 sol-pi-explainer.html  visual explainer artifact
 ```
 

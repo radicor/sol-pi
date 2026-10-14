@@ -36,6 +36,14 @@ jobs:
       - name: Derived artifacts match the committed results
         run: npm run check-artifacts
 
+      # The tests speak the SDK client in-process; this drives the real child
+      # process from the other side of a stdio pipe with fs and terminal
+      # advertised, so the client half of every delegated method is exercised
+      # against a third-party-style host. Offline by default: a scripted model
+      # makes the delegation path deterministic without a key.
+      - name: A real host over stdio exercises the delegated backend
+        run: npx tsx probes/host.ts
+
   # The suite drives a scripted provider, so the Anthropic seam only sees a
   # fake model. This job sends one real prompt through the stdio server — the
   # only test of the request shape, the stop condition, and the wire against
@@ -59,3 +67,11 @@ jobs:
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: node probes/live-agent.mjs
+
+      # The same host-driven flow with the live model: the model decides which
+      # tools to call, so this is the only run where a real model's choices
+      # cross the delegated backend.
+      - name: The same flow driven by the live model
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: npx tsx probes/host.ts
