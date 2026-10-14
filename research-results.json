@@ -12,74 +12,74 @@
     {
       "id": "pi-baseline",
       "aggregateScore": 1,
-      "tokenTraffic": 4698654,
-      "cost": 8.1102376,
-      "solved": 6,
-      "total": 6,
-      "tokenEfficiency": 8.1102376
+      "tokenTraffic": 4915079,
+      "cost": 8.693548,
+      "solved": 7,
+      "total": 7,
+      "tokenEfficiency": 8.693548
     },
     {
       "id": "+action-fusion",
       "aggregateScore": 1,
-      "tokenTraffic": 4704728,
-      "cost": 8.119992,
-      "solved": 6,
-      "total": 6,
-      "tokenEfficiency": 8.119992
+      "tokenTraffic": 4921787,
+      "cost": 8.7041768,
+      "solved": 7,
+      "total": 7,
+      "tokenEfficiency": 8.7041768
     },
     {
       "id": "+online-compact",
       "aggregateScore": 1,
-      "tokenTraffic": 3101364,
-      "cost": 7.1176356,
-      "solved": 6,
-      "total": 6,
-      "tokenEfficiency": 7.1176356
+      "tokenTraffic": 3317789,
+      "cost": 7.700946,
+      "solved": 7,
+      "total": 7,
+      "tokenEfficiency": 7.700946
     },
     {
       "id": "+evidence-reducer",
       "aggregateScore": 1,
-      "tokenTraffic": 112980,
-      "cost": 0.2676208,
-      "solved": 6,
-      "total": 6,
-      "tokenEfficiency": 0.2676208
+      "tokenTraffic": 329405,
+      "cost": 0.8509312,
+      "solved": 7,
+      "total": 7,
+      "tokenEfficiency": 0.8509312
     },
     {
       "id": "+observation-pack",
       "aggregateScore": 1,
-      "tokenTraffic": 913043,
-      "cost": 3.88266,
-      "solved": 6,
-      "total": 6,
-      "tokenEfficiency": 3.88266
+      "tokenTraffic": 986024,
+      "cost": 4.2844036,
+      "solved": 7,
+      "total": 7,
+      "tokenEfficiency": 4.2844036
     },
     {
       "id": "sol-pi[efficiency]",
       "aggregateScore": 1,
-      "tokenTraffic": 288032,
-      "cost": 1.561704,
-      "solved": 6,
-      "total": 6,
-      "tokenEfficiency": 1.561704
+      "tokenTraffic": 360841,
+      "cost": 1.96279,
+      "solved": 7,
+      "total": 7,
+      "tokenEfficiency": 1.96279
     },
     {
       "id": "sol-pi[performance]",
       "aggregateScore": 1,
-      "tokenTraffic": 1720237,
-      "cost": 4.9012080000000005,
-      "solved": 6,
-      "total": 6,
-      "tokenEfficiency": 4.9012080000000005
+      "tokenTraffic": 1856764,
+      "cost": 5.3636828,
+      "solved": 7,
+      "total": 7,
+      "tokenEfficiency": 5.3636828
     },
     {
       "id": "+online-compact-tight",
       "aggregateScore": 1,
-      "tokenTraffic": 2637660,
-      "cost": 5.037759200000001,
-      "solved": 6,
-      "total": 6,
-      "tokenEfficiency": 5.037759200000001
+      "tokenTraffic": 2854085,
+      "cost": 5.6210696,
+      "solved": 7,
+      "total": 7,
+      "tokenEfficiency": 5.6210696
     }
   ],
   "retained": [
@@ -127,6 +127,7 @@
       "stats": {
         "reduced": 15,
         "fallbacks": 0,
+        "unrecognisedFormatFallbacks": 0,
         "savedBytes": 1120323
       }
     },
@@ -140,6 +141,18 @@
         "gateEvaluations": 6,
         "gatePasses": 3,
         "lastRemovedTokens": 106604
+      }
+    },
+    "reducerUnrecognisedFormat": {
+      "turns": 9,
+      "tokens": 216425,
+      "cost": 0.5833104,
+      "costSaved": 0,
+      "stats": {
+        "reduced": 0,
+        "fallbacks": 0,
+        "unrecognisedFormatFallbacks": 3,
+        "savedBytes": 0
       }
     }
   }

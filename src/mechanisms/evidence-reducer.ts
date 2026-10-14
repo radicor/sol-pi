@@ -156,6 +156,7 @@ export class EvidencePreservingReducer implements Mechanism {
   private originalArchive = new Map<string, string>();
   private reduced = 0;
   private fallbacks = 0;
+  private unrecognisedFormatFallbacks = 0;
   private savedBytes = 0;
 
   constructor(options: ReducerOptions = {}, extractor?: ExtractorModel) {
@@ -179,6 +180,16 @@ export class EvidencePreservingReducer implements Mechanism {
     const receipt = this.extractor.extract(result.stdout, result.exitCode);
     const body = this.renderReceipt(receipt);
     receipt.bytes = body.length;
+
+    // An empty receipt is a distinct failure mode: the log's format is one the
+    // extractor's rules do not recognize, which is a coverage gap in the
+    // stand-in rather than a receipt that could not be trusted. Counted
+    // separately so the stats can show a no-op reducer instead of dressing a
+    // coverage gap up as a verification failure.
+    if (receipt.quotes.length === 0) {
+      this.unrecognisedFormatFallbacks++;
+      return result;
+    }
 
     // --- deterministic verifier ---
     if (!this.verify(receipt, body, result)) {
@@ -240,6 +251,7 @@ export class EvidencePreservingReducer implements Mechanism {
     return {
       reduced: this.reduced,
       fallbacks: this.fallbacks,
+      unrecognisedFormatFallbacks: this.unrecognisedFormatFallbacks,
       savedBytes: this.savedBytes,
     };
   }
@@ -248,6 +260,7 @@ export class EvidencePreservingReducer implements Mechanism {
     this.originalArchive.clear();
     this.reduced = 0;
     this.fallbacks = 0;
+    this.unrecognisedFormatFallbacks = 0;
     this.savedBytes = 0;
   }
 }

@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { rustcLog } from "../src/tasks/corpus.js";
 
 const r = JSON.parse(fs.readFileSync("research-results.json", "utf8"));
 const rows = new Map(r.table.map((t) => [t.id, t]));
@@ -64,9 +65,46 @@ const headPct = ((base.cost - rows.get("+evidence-reducer").cost) / base.cost * 
 const headM = html.match(/−([0-9.]+)%<\/div><div class="k">prototype token cost/);
 chk("explainer headline", headM?.[1], headPct);
 
-const lh = (r.activation.EvidencePreservingReducer.costSaved * 100).toFixed(1);
-const lhM = html.match(/−([0-9.]+)% cost on long-horizon/);
-chk("explainer long-horizon pill", lhM?.[1], lh);
+// Mechanism-card pills: each card must quote its own mechanism's measured figures.
+// The ObservationPack card must not carry the Reducer's long-horizon saving (the
+// N-2 mislabel class), and the compact card's traffic pill must track the search table.
+const card = (cls) => {
+  const start = html.indexOf(`class="mech ${cls}"`);
+  const end = html.indexOf('class="mech ', start + 1);
+  return html.slice(start, end === -1 ? html.length : end);
+};
+const lhPct = (name) => (r.activation[name].costSaved * 100).toFixed(1);
+const oc = rows.get("+online-compact");
+chk(
+  "explainer compact traffic pill",
+  card("m2").match(/prototype: −([0-9.]+)% traffic/)?.[1],
+  (((base.tokenTraffic - oc.tokenTraffic) / base.tokenTraffic) * 100).toFixed(1),
+);
+chk(
+  "explainer ObservationPack long-horizon pill",
+  card("m3").match(/−([0-9.]+)% cost on long-horizon/)?.[1],
+  lhPct("ObservationPack"),
+);
+chk(
+  "explainer Reducer long-horizon pill",
+  card("m4").match(/−([0-9.]+)% cost on long-horizon/)?.[1],
+  lhPct("EvidencePreservingReducer"),
+);
+
+// The honest-differences extractor bullet must quote the measured coverage gap
+// from the JSON and the corpus, so the limitation cannot drift into a hedge.
+const gap = r.activation.reducerUnrecognisedFormat;
+if (!gap) {
+  ok = false;
+  console.log("MISSING activation.reducerUnrecognisedFormat in research-results.json");
+} else {
+  const fbM = md.match(/(\d+) unrecognised-format fallbacks/);
+  chk("README gap fallbacks", fbM?.[1], gap.stats.unrecognisedFormatFallbacks);
+  const csM = md.match(/saves \*\*exactly ([0-9.]+)\*\*\s+cost/);
+  chk("README gap costSaved", csM?.[1], gap.costSaved);
+  const bytesM = md.match(/([0-9,]+)-byte rustc warnings log/);
+  chk("README gap log bytes", bytesM?.[1], rustcLog().length.toLocaleString("en-US"));
+}
 
 // Every non-baseline candidate appears once in the bar chart, at the right value
 const barStart = html.indexOf("Cost saved vs. baseline");

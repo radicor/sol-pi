@@ -46,6 +46,15 @@ them.
 > paragraphs above are the freezes as they stood at each audit; the table below is the current
 > freeze.
 >
+> A fifth round ([`REMEDIATION-5.md`](./REMEDIATION-5.md)) measures a limitation the earlier rounds
+> only asserted: the extractor stand-in's rules cover pytest-shaped logs but not rustc, go, tsc,
+> maven, or eslint. An empty receipt is now counted as an **unrecognised format** — a coverage gap
+> in the stand-in — separately from a genuine verification failure; the corpus gained
+> `verifier-003`, a task whose 55 KiB rustc warnings log the reducer provably cannot compress
+> (costSaved exactly 0); and `probes/measure-extractor-coverage.ts` pins the coverage of five real
+> tool formats. The reducer's headline saving moves 96.7% → 90.2% for that reason, deliberately:
+> the published number now includes the task that exposes the gap instead of quietly excluding it.
+>
 > Verification is enforced rather than trusted. `npm run check` re-runs the whole pipeline and
 > fails if the emitted `research-results.json` drifts from the committed file; `npm run
 > check-artifacts` fails if the README or the explainer drift from that file. CI runs both on
@@ -56,7 +65,7 @@ npm install
 npm run research     # run the full Auto-Research Loop + held-out evaluation
 npm run demo         # search loop without the held-out stage
 npm run agent        # serve the harness as an ACP v1 agent over stdio JSON-RPC
-npm test             # 150 tests: mechanisms, both gates, and the ACP server
+npm test             # 157 tests: mechanisms, both gates, and the ACP server
 npm run typecheck
 npm run check        # fail if research-results.json drifts from program output
 npm run check-artifacts  # fail if README/explainer drift from research-results.json
@@ -124,7 +133,9 @@ src/
   cli.ts             demo driver and agent entry point
 tests/               unit tests + in-process and stdio ACP tests
 probes/              check-artifacts.mjs (number drift), live-agent.mjs (real model),
-                     host.ts (a full ACP host over stdio, delegated backend)
+                     host.ts (a full ACP host over stdio, delegated backend),
+                     measure-cache-prefix.ts (cache rewrite cost),
+                     measure-extractor-coverage.ts (extractor rule coverage)
 sol-pi-explainer.html  visual explainer artifact
 ```
 
@@ -219,23 +230,30 @@ Captured from a real `npm run research` run; the program writes the same figures
 ```
 harness                   score       traffic(M)      cost($)       solved      tok eff       vs base cost
 ------------------------------------------------------------------------------------------------------------
-pi-baseline               1.000       4.6987          8.11          6/6         8.1102        --
-+action-fusion            1.000       4.7047          8.12          6/6         8.1200        -0.1%
-+online-compact           1.000       3.1014          7.12          6/6         7.1176        12.2%
-+evidence-reducer         1.000       0.1130          0.27          6/6         0.2676        96.7%
-+observation-pack         1.000       0.9130          3.88          6/6         3.8827        52.1%
-sol-pi[efficiency]        1.000       0.2880          1.56          6/6         1.5617        80.7%
-sol-pi[performance]       1.000       1.7202          4.90          6/6         4.9012        39.6%
-+online-compact-tight     1.000       2.6377          5.04          6/6         5.0378        37.9%
+pi-baseline               1.000       4.9151          8.69          7/7         8.6935        --
++action-fusion            1.000       4.9218          8.70          7/7         8.7042        -0.1%
++online-compact           1.000       3.3178          7.70          7/7         7.7009        11.4%
++evidence-reducer         1.000       0.3294          0.85          7/7         0.8509        90.2%
++observation-pack         1.000       0.9860          4.28          7/7         4.2844        50.7%
+sol-pi[efficiency]        1.000       0.3608          1.96          7/7         1.9628        77.4%
+sol-pi[performance]       1.000       1.8568          5.36          7/7         5.3637        38.3%
++online-compact-tight     1.000       2.8541          5.62          7/7         5.6211        35.3%
 
-[gate] +evidence-reducer      score=1.000 traffic=0.1130M cost=$0.27 -> RETAIN | aggregateScore within tolerance | tokenTraffic -97.6%, cost -96.7%
+[gate] +evidence-reducer      score=1.000 traffic=0.3294M cost=$0.85 -> RETAIN | aggregateScore within tolerance | tokenTraffic -93.3%, cost -90.2%
 held-out frozen   +evidence-reducer    score=1.000 solved=2/2 cost=$0.07 traffic=0.0225M
 held-out baseline pi-baseline          score=1.000 solved=2/2 cost=$1.48 traffic=0.5499M
 cost saved on held-out: 95.5%
 held-out verdict      : PASS — aggregateScore within tolerance; tokenTraffic -95.9%, cost -95.5%
+
+(no mechanisms)            turns=21 tokens=3,323,869 cost=$4.408
+ActionFusion               turns=20 tokens=3,327,111 cost=$4.417 stats={"fused":0,"modelFused":1,"total":1}
+ObservationPack            turns=21 tokens=459,938 cost=$1.346 stats={"archived":15,"substituted":14,"recalled":0,"bytesArchived":1132376}
+EvidencePreservingReducer  turns=21 tokens=57,205 cost=$0.102 stats={"reduced":15,"fallbacks":0,"unrecognisedFormatFallbacks":0,"savedBytes":1120323}
+OnlineContextCompact       turns=21 tokens=1,726,979 cost=$3.420 stats={"compactions":3,"gateEvaluations":6,"gatePasses":3,"lastRemovedTokens":106604}
+(gap task: rustc log)      turns=9 tokens=216,425 cost=$0.583 stats={"reduced":0,"fallbacks":0,"unrecognisedFormatFallbacks":3,"savedBytes":0}
 ```
 
-Three things worth flagging in these numbers:
+Four things worth flagging in these numbers:
 
 - **Action Fusion measures ~0% here, and that is honest.** The corpus's scripted policy already
   emits the write and the run in a single turn, so there is no intermediate round trip for fusion
@@ -244,23 +262,29 @@ Three things worth flagging in these numbers:
   large log never entered the context. The saving was missing work, not saved work.
 - **The reducer dominates** once it matches the logs the environment actually emits. It carries the
   frozen candidate on both the search and the held-out tasks, which is the paper's central
-> claim — efficiency won at the harness layer without touching the model.
+  claim — efficiency won at the harness layer without touching the model.
 
 - **The context-substituting mechanisms look smaller than they did.** These figures bill the
   prefix cache: each request pays the read price for the part that repeats the previous request
   verbatim, the write price for the appended tail, and the full input price for anything a
   mechanism rewrote mid-context. ObservationPack substitutes archived observations *in place*, so
   every substitution invalidates the suffix that was already cached — its saving falls from 79.5%
-  to 52.1% once that rewrite is billed, and OnlineContextCompact's falls from 33.7% to 12.2%. The
+  to 50.7% once that rewrite is billed, and OnlineContextCompact's falls from 33.7% to 11.4%. The
   reducer escapes the effect because it acts before the observation reaches the context at all.
   An earlier build recorded zero cache traffic in the ledger, which made substitution look free;
   `probes/measure-cache-prefix.ts` measures the effect directly.
+- **The reducer's headline saving moved 96.7% → 90.2%, deliberately.** The corpus gained
+  `verifier-003`, a task whose build log is 55,248 bytes of rustc warnings — a format the
+  extractor's rules do not cover, so the reducer provably compresses nothing on it and saves
+  exactly 0 cost (published under `activation.reducerUnrecognisedFormat` in
+  `research-results.json`). The published number now includes the task that exposes the gap
+  instead of quietly excluding it. The held-out verdict is unchanged: 95.5% saved, PASS.
 
 ## Honest differences from the paper
 
 - The model is a deterministic scripted backend, not GPT-5.6 Sol or Opus 5. Its policy is
   fixed so that token deltas reflect harness changes only.
-- The corpus is 6 search + 2 held-out environments, not 535 + EdgeBench's 51.
+- The corpus is 7 search + 2 held-out environments, not 535 + EdgeBench's 51.
 - Token estimation is character/word based, not a real BPE tokenizer.
 - Cost figures use a fixed price table and are not comparable in magnitude to the paper's
   production runs. They do bill the prefix cache — read price for the part that repeats the
@@ -272,7 +296,15 @@ Three things worth flagging in these numbers:
   predicate over the log formats the environment actually emits (pytest banners, `E …` assertion
   lines, bracketed `[summary]`/`[warn]` lines), ordered by evidentiary value. The fidelity knob
   drops quotes by a hash-seeded rule rather than a PRNG, so a given log always yields the same
-  receipt.
+  receipt. **Its coverage is measured, not assumed** — `probes/measure-extractor-coverage.ts`
+  runs the rules against real failure logs: rustc, go, tsc, maven, and eslint all match **zero**
+  rules and yield no quotes, while a real pytest failure log yields evidence. One corpus task,
+  `verifier-003`, is built to expose the gap: its build is a 55,248-byte rustc warnings log, the
+  reducer reduces nothing, records **3 unrecognised-format fallbacks**, and saves **exactly 0**
+  cost against the same task without the mechanism — published under
+  `activation.reducerUnrecognisedFormat` in `research-results.json`. An empty receipt counts as
+  an unrecognised format, not a verification failure, so the stats cannot dress a coverage gap
+  up as a failed verification.
 - The paper's evaluation runs the candidate stack against real provider APIs. The research path
   here stays in-process — no network call is ever made by `npm run research`, so the numbers above
   are reproducible offline. The agent path is separate and can reach a real provider, but nothing

@@ -25,6 +25,43 @@ function bigLog(kind: string): string {
   return lines.join("\n");
 }
 
+/**
+ * A build log in the shape rustc actually emits: one `warning:` header per
+ * diagnostic, a span pointer (`  --> file:line:col`), the source line with a
+ * caret underline, and the occasional `note:`/`= help:`. Nothing here is
+ * written to match the evidence rules — that is the point of the task that
+ * uses it. It exercises the reducer's coverage gap on a format a real tool
+ * produces, rather than on another bracketed fixture.
+ */
+function rustcLog(): string {
+  const variables = ["token", "session", "buffer", "handle", "cursor", "payload", "nonce", "frame"];
+  const blocks: string[] = [];
+  for (let i = 0; i < 300; i++) {
+    const name = variables[i % variables.length];
+    const line = 17 + (i % 200);
+    blocks.push(
+      `warning: unused variable: \`${name}\``,
+      `  --> src/net/client.rs:${line}:${7 + (i % 30)}`,
+      `   |`,
+      `${line} |     let ${name} = load_${name}();`,
+      `   |         ${"^".repeat(name.length)}`,
+      `   |`,
+      `   = help: maybe it is worth using this value`,
+    );
+    if (i % 25 === 0) {
+      blocks.push(
+        `note: the lint level defined here can be raised`,
+        `  --> src/net/client.rs:3:9`,
+        `   |`,
+        `3  | #![warn(unused_variables)]`,
+        `   |         ^^^^^^^^^^^^^^^^^`,
+      );
+    }
+  }
+  blocks.push(`warning: 300 warnings emitted`, ``);
+  return blocks.join("\n");
+}
+
 const PYTHON_BUGGY = `def add(a, b):
     return a - b
 
@@ -138,6 +175,28 @@ export const VERIFIER_TASKS: TaskSpec[] = [
     ],
     bigLog: () => bigLog("cargo"),
   },
+  {
+    id: "verifier-003",
+    language: "rust",
+    category: "infra",
+    description:
+      "client.rs compiles but the build emits 300 warnings. fetch() returns bool where the new scheduler expects Result; change the return type so the warnings stop.",
+    initialFiles: { "client.rs": "fn fetch() -> bool { false }\n" },
+    tests: [
+      {
+        name: "fetch_returns_result",
+        fn: (files) => {
+          const src = files["client.rs"] ?? "";
+          const ok = /fn fetch\(\)\s*->\s*Result<[\s\S]*Ok\(/.test(src);
+          return {
+            passed: ok,
+            detail: ok ? "" : "verifier: fetch() must return Result<..> with Ok(..)",
+          };
+        },
+      },
+    ],
+    bigLog: () => rustcLog(),
+  },
 ];
 
 /**
@@ -207,4 +266,4 @@ export const HELD_OUT_ENVIRONMENTS: TaskSpec[] = [
   },
 ];
 
-export { PYTHON_BUGGY, PYTHON_FIXED, bigLog };
+export { PYTHON_BUGGY, PYTHON_FIXED, bigLog, rustcLog };

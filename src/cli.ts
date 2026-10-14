@@ -14,7 +14,7 @@ import {
   heldOutEvaluation,
   heldOutVerdict,
 } from "./research/loop.js";
-import { HELD_OUT_ENVIRONMENTS, LONG_HORIZON_TASK, SEARCH_ENVIRONMENTS } from "./tasks/corpus.js";
+import { HELD_OUT_ENVIRONMENTS, LONG_HORIZON_TASK, SEARCH_ENVIRONMENTS, VERIFIER_TASKS } from "./tasks/corpus.js";
 import { readFileSync, writeFileSync } from "node:fs";
 
 /**
@@ -31,6 +31,7 @@ const FIXTURES: Record<string, { write: string; path: string }> = {
   "repo-003": { path: "main.go", write: "func main() {\n  if !run() { exitCode = 1 }\n}\n\nvar exitCode = 0\n\nfunc run() bool { return false }\n" },
   "verifier-001": { path: "pipeline.py", write: "def normalize(xs):\n    lo, hi = min(xs), max(xs)\n    return [(x - lo) / (hi - lo) for x in xs]\n" },
   "verifier-002": { path: "client.rs", write: "fn fetch() -> bool {\n    for attempt in 0..3 {\n        if try_fetch() { return true }\n    }\n    false\n}\n\nfn try_fetch() -> bool { false }\n" },
+  "verifier-003": { path: "client.rs", write: "fn fetch() -> Result<bool, FetchError> {\n    if ready() { return Ok(true) }\n    Ok(false)\n}\n\nenum FetchError { Unavailable }\n\nfn ready() -> bool { true }\n" },
   "long-horizon-001": { path: "server.py", write: "def health():\n    return 'ok'\n" },
   "heldout-001": { path: "Validator.java", write: "class Validator { boolean valid(String e) { return e.matches(\"^[a-z0-9+\\\\.]+@[a-z]+\\\\.[a-z]+$\"); } }\n" },
   "heldout-002": { path: "buffer.cpp", write: "char buf[1024];\n" },
@@ -57,7 +58,11 @@ function scriptFor(task: TaskSpec, config: CandidateConfig): ScriptStep[] {
     },
   ];
   const writeCall: ToolCall = { tool: "write_file", args: { path: fix.path, content: fix.write } };
-  const runCall: ToolCall = { tool: "run", args: { command: "test" } };
+  // verifier-003 is a compile-fix task: the build is the verification, and its
+  // rustc warnings log is the format the stand-in extractor cannot parse, so
+  // the scripted policy verifies against `build` rather than the pytest run.
+  const verifyCmd = task.id === "verifier-003" ? "build" : "test";
+  const runCall: ToolCall = { tool: "run", args: { command: verifyCmd } };
   const supportsFusion = config.mechanisms.includes("ActionFusion");
   steps.push({ kind: "tool", calls: supportsFusion ? [writeCall, runCall] : [writeCall] });
   if (!supportsFusion) steps.push({ kind: "tool", calls: [runCall] });
@@ -66,7 +71,7 @@ function scriptFor(task: TaskSpec, config: CandidateConfig): ScriptStep[] {
     kind: "tool",
     calls: [{ tool: "update_plan", args: { steps: planSteps(["done", "done", "in_progress", "pending"]) } }],
   });
-  steps.push({ kind: "tool", calls: [{ tool: "run", args: { command: "test" } }] });
+  steps.push({ kind: "tool", calls: [runCall] });
   steps.push({ kind: "tool", calls: [{ tool: "run", args: { command: "build" } }] });
   steps.push({
     kind: "tool",
@@ -362,6 +367,39 @@ async function main() {
     };
     console.log(
       `${mech.padEnd(26)} turns=${res.turns} tokens=${totalTokens(res.usage).toLocaleString()} cost=$${res.cost.toFixed(3)} stats=${JSON.stringify(stats ?? {})}`,
+    );
+  }
+
+  // A second activation experiment, on the one task whose build log matches
+  // none of the evidence rules. The reducer is a provable no-op here — the
+  // fallback returns the verbatim result, so the request stream is identical
+  // to the baseline's — and the gap is counted as an unrecognised format
+  // rather than a verification failure. Published so the extractor's coverage
+  // limit is a measurement next to the published savings, not a hedge.
+  const gapTask = VERIFIER_TASKS.find((t) => t.id === "verifier-003");
+  if (gapTask) {
+    const gapCfg: CandidateConfig = { id: "+evidence-reducer", mechanisms: ["EvidencePreservingReducer"], params: {}, family: "delegation", origin: "add-one" };
+    const gapBaseEnv = new SimulatedEnvironment(gapTask);
+    const gapBaseModel = modelFactory();
+    loadScript(gapBaseModel, () => scriptFor(gapTask, { id: "base", mechanisms: [], params: {}, family: "tools", origin: "add-one" }));
+    const gapBaseRun = new Harness({ id: "activation-gap-base", model: gapBaseModel, env: gapBaseEnv, maxTurns: 40 });
+    const gapBaseResult = await gapBaseRun.run();
+
+    const gapEnv = new SimulatedEnvironment(gapTask);
+    const gapModel = modelFactory();
+    loadScript(gapModel, () => scriptFor(gapTask, gapCfg));
+    const gapHarness = buildHarness(gapCfg, { id: "activation-gap", model: gapModel, env: gapEnv, maxTurns: 40 });
+    const gapResult = await gapHarness.run();
+    const gapStats = (gapHarness.mechanisms[0] as unknown as { stats?: Record<string, number> }).stats ?? {};
+    activation.reducerUnrecognisedFormat = {
+      turns: gapResult.turns,
+      tokens: totalTokens(gapResult.usage),
+      cost: gapResult.cost,
+      costSaved: gapBaseResult.cost > 0 ? 1 - gapResult.cost / gapBaseResult.cost : undefined,
+      stats: gapStats,
+    };
+    console.log(
+      `${"(gap task: rustc log)".padEnd(26)} turns=${gapResult.turns} tokens=${totalTokens(gapResult.usage).toLocaleString()} cost=$${gapResult.cost.toFixed(3)} stats=${JSON.stringify(gapStats)}`,
     );
   }
 

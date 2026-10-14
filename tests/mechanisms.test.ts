@@ -141,14 +141,17 @@ test("Reducer converts a large log into a verified receipt", () => {
   assert.ok(reducer.originalFor("call_big") !== undefined, "exact original archived");
 });
 
-test("Reducer falls back to the original when verification fails", () => {
-  // Fidelity 0 makes the extractor omit quotes that the verifier requires.
+test("Reducer counts an empty receipt as an unrecognised format, not a verification failure", () => {
+  // Fidelity 0 makes the extractor omit every quote. The receipt is not
+  // untrustworthy, it is empty — a coverage gap, counted separately from the
+  // fallbacks taken when verification genuinely fails.
   const extractor = new SimpleExtractor(0);
   const reducer = new EvidencePreservingReducer({ thresholdBytes: 1000, extractorFidelity: 0 }, extractor);
   const big = bigResult(6000, "call_bad", "test");
   const out = reducer.transformResult(big, fakeCtx(1));
-  assert.equal(out.stdout, big.stdout, "unverifiable receipts fall back to the original");
-  assert.equal(reducer.stats.fallbacks, 1);
+  assert.equal(out.stdout, big.stdout, "the verbatim original is returned either way");
+  assert.equal(reducer.stats.fallbacks, 0);
+  assert.equal(reducer.stats.unrecognisedFormatFallbacks, 1);
 });
 
 test("Reducer bypasses file reads and search results", () => {
