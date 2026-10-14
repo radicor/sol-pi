@@ -51,6 +51,9 @@ export class PermissionGate {
   constructor(
     private asker: PermissionAsker,
     private sessionId: string,
+    /** Called after a decision to allow, so a observer can report the tool
+     *  starting real work. Never called for a denial or cancellation. */
+    private onApproved?: (req: AskPermission) => void,
   ) {}
 
   async ask(req: AskPermission): Promise<PermissionDecision> {
@@ -92,9 +95,11 @@ export class PermissionGate {
     if (option.kind === "allow_always" || option.kind === "reject_always") {
       this.remembered.set(key, option.kind);
     }
-    return option.kind.startsWith("allow")
-      ? { outcome: "allowed" }
-      : { outcome: "denied", reason: `rejected: ${key}` };
+    if (option.kind.startsWith("allow")) {
+      this.onApproved?.(req);
+      return { outcome: "allowed" };
+    }
+    return { outcome: "denied", reason: `rejected: ${key}` };
   }
 }
 

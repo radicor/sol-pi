@@ -234,6 +234,15 @@ function diffJson(path: string, a: unknown, b: unknown): string[] {
 
 async function main() {
   const args = process.argv.slice(2);
+
+  // The agent is a stdio JSON-RPC server and must never touch the research
+  // path, so it is dispatched before any of the research setup runs.
+  if (args[0] === "agent") {
+    const { runAgent } = await import("./agent/main.js");
+    await runAgent();
+    return;
+  }
+
   const doResearch = args.includes("--research");
   const checkMode = args.includes("--check");
 

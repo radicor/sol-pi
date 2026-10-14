@@ -35,3 +35,27 @@ jobs:
       # AUDIT-3.md (C-2, C-4) found in the published figures.
       - name: Derived artifacts match the committed results
         run: npm run check-artifacts
+
+  # The suite drives a scripted provider, so the Anthropic seam only sees a
+  # fake model. This job sends one real prompt through the stdio server — the
+  # only test of the request shape, the stop condition, and the wire against
+  # the actual API. It is gated on the secret, so a fork without a key still
+  # gets a green run, and it is never triggered by a pull_request push, so a
+  # contributor cannot spend the org's quota.
+  live:
+    needs: verify
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name != 'pull_request' && secrets.ANTHROPIC_API_KEY != '' }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - run: npm ci
+
+      - name: One real prompt through the stdio server
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: node probes/live-agent.mjs

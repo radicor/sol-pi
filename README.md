@@ -40,11 +40,35 @@ them.
 npm install
 npm run research     # run the full Auto-Research Loop + held-out evaluation
 npm run demo         # search loop without the held-out stage
-npm test             # 44 tests across all mechanisms and both gates
+npm run agent        # serve the harness as an ACP v1 agent over stdio JSON-RPC
+npm test             # 140 tests: mechanisms, both gates, and the ACP server
 npm run typecheck
 npm run check        # fail if research-results.json drifts from program output
 npm run check-artifacts  # fail if README/explainer drift from research-results.json
 ```
+
+## Running it as an agent
+
+The harness is also an **ACP v1** agent speaking stdio JSON-RPC, so a host (Codync, or anything
+else that speaks the protocol) can drive the same loop the research measures. `npm run agent`
+is the entry point; the server is `src/agent/`.
+
+- **`initialize` → `session/new` → `session/prompt`**, with `session/update` notifications as the
+  turn runs and `session/request_permission` before anything that touches the filesystem or runs a
+  command. `session/cancel` aborts a turn in flight.
+- **Two tool backends, chosen from the client's advertised capabilities.** A client that offers
+  `fs.readTextFile` + `fs.writeTextFile` and `terminal` gets every read, write, and run delegated
+  to it; anything less and the agent falls back to running them locally in the session's `cwd`.
+- **A provider seam, Anthropic first.** `SOLPI_PROVIDER=anthropic` (default) with
+  `ANTHROPIC_API_KEY`, or `SOLPI_PROVIDER=scripted` with `SOLPI_SCRIPT=<path>` for a fully offline
+  run driven by a recorded script — the same script format the research suite uses.
+- **stdout is the protocol.** The console is redirected to stderr before the stream is built, so a
+  stray log lands in the host's logs instead of corrupting a line a host would reject.
+- **A bad configuration answers the request instead of dying.** The provider resolves on the first
+  `session/new`, so a missing key returns an error the host can show its user.
+
+`probes/live-agent.mjs` sends one real prompt through the server; CI runs it only when a key is
+configured, because it is the only test that exercises the model seam against the real API.
 
 ## Layout
 
@@ -68,8 +92,20 @@ src/
   tasks/
     corpus.ts        search environments (repo-derived + verifier-driven) and
                       held-out environments
-  cli.ts             demo driver
-tests/               unit tests
+  providers/
+    anthropic.ts     Anthropic as a ChatProvider
+    scripted-provider.ts  the same seam over a recorded script
+    types.ts         the seam itself; the harness never names a vendor
+  agent/
+    server.ts        ACP handlers: initialize, session/new, session/prompt, cancel
+    session.ts       one session: the harness, the permission gate, the mappers
+    events.ts        HarnessEvent -> session/update notifications
+    env-client.ts    tool backend that delegates fs + terminal to the client
+    permissions.ts   the gate: allow_once / allow_always / reject / reject_always
+    main.ts          the stdio entry point; owns the stdout redirect
+  cli.ts             demo driver and agent entry point
+tests/               unit tests + in-process and stdio ACP tests
+probes/              check-artifacts.mjs (number drift), live-agent.mjs (real model)
 sol-pi-explainer.html  visual explainer artifact
 ```
 
@@ -218,8 +254,10 @@ Three things worth flagging in these numbers:
   lines, bracketed `[summary]`/`[warn]` lines), ordered by evidentiary value. The fidelity knob
   drops quotes by a hash-seeded rule rather than a PRNG, so a given log always yields the same
   receipt.
-- The paper's evaluation runs the candidate stack against real provider APIs. Everything here is
-  in-process; no network call is ever made.
+- The paper's evaluation runs the candidate stack against real provider APIs. The research path
+  here stays in-process — no network call is ever made by `npm run research`, so the numbers above
+  are reproducible offline. The agent path is separate and can reach a real provider, but nothing
+  it observes feeds the published figures.
 
 ## The explainer
 
