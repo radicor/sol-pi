@@ -279,6 +279,36 @@ test("LocalEnv exposes an empty test suite, so score is 0", async () => {
   });
 });
 
+test("LocalEnv reads a missing file as undefined and an existing empty file as empty", async () => {
+  await withCwd(async (cwd) => {
+    const env = new LocalEnv(cwd, allowAll().gate);
+    assert.equal(await env.readFile("no_such_file.ts"), undefined, "missing is undefined, not an empty string");
+    await env.writeFile("empty.ts", "");
+    assert.equal(await env.readFile("empty.ts"), "", "an existing empty file reads as a real empty string");
+
+    const cat = await env.run("cat empty.ts");
+    assert.equal(cat.exitCode, 0, "cat of an existing empty file succeeds");
+    assert.equal(cat.stdout, "");
+    const missing = await env.run("cat no_such_file.ts");
+    assert.equal(missing.exitCode, 1, "cat of a missing file fails");
+    assert.match(missing.stderr, /No such file/);
+  });
+});
+
+test("each LocalEnv mints its own call ids starting at call_1", async () => {
+  await withCwd(async (cwd) => {
+    const a = new LocalEnv(cwd, allowAll().gate);
+    const b = new LocalEnv(cwd, allowAll().gate);
+    const ra = await a.writeFile("a.txt", "a");
+    const rb = await b.writeFile("b.txt", "b");
+    assert.equal(ra.callId, "call_1");
+    assert.equal(rb.callId, "call_1", "two LocalEnvs in one process each start at call_1");
+
+    const next = await a.writeFile("a.txt", "a2");
+    assert.equal(next.callId, "call_2", "an environment's ids advance across calls");
+  });
+});
+
 // --- ClientEnv --------------------------------------------------------------
 
 class FakeTerminal implements TerminalHandleLike {
@@ -306,7 +336,11 @@ class FakeClient implements ClientEnvDeps {
 
   async readTextFile(params: { path: string }): Promise<ReadTextFileResponse> {
     this.readPaths = [...this.readPaths, params.path];
-    return { content: this.files.get(params.path) ?? "" };
+    // A real host errors on a missing file rather than answering with "", and
+    // the contract turns that error into an undefined read; answering "" here
+    // would make the fake unable to distinguish missing from existing-empty.
+    if (!this.files.has(params.path)) throw new Error("fs/read_text_file: not found");
+    return { content: this.files.get(params.path)! };
   }
   readPaths: string[] = [];
 
@@ -384,6 +418,30 @@ test("a terminal failure reports rather than hanging", async () => {
   const res = await env.run("npm test");
   assert.equal(res.exitCode, 1);
   assert.match(res.stderr, /terminal\/create failed/);
+});
+
+test("ClientEnv reads a client error as missing and a supplied empty file as empty", async () => {
+  const { env, client } = clientEnv("/work", () => selected("allow_always"));
+  assert.equal(await env.readFile("no_such_file.ts"), undefined, "a client that cannot supply the file reads as missing");
+  client.files.set("/work/empty.ts", "");
+  assert.equal(await env.readFile("empty.ts"), "", "an empty the client does supply arrives as a real empty string");
+
+  const cat = await env.run("cat empty.ts");
+  assert.equal(cat.exitCode, 0, "cat of an existing empty file succeeds");
+  const missing = await env.run("cat no_such_file.ts");
+  assert.equal(missing.exitCode, 1, "cat of a file the client cannot supply fails");
+});
+
+test("each ClientEnv mints its own call ids starting at call_1", async () => {
+  const x = clientEnv("/work", () => selected("allow_always"));
+  const y = clientEnv("/work", () => selected("allow_always"));
+  const rx = await x.env.writeFile("x.txt", "x");
+  const ry = await y.env.writeFile("y.txt", "y");
+  assert.equal(rx.callId, "call_1");
+  assert.equal(ry.callId, "call_1", "two ClientEnvs in one process each start at call_1");
+
+  const next = await x.env.writeFile("x.txt", "x2");
+  assert.equal(next.callId, "call_2", "an environment's ids advance across calls");
 });
 
 // --- through the harness ----------------------------------------------------

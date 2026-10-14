@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { mkdir, readFile as fsRead, writeFile as fsWrite } from "node:fs/promises";
 import { dirname } from "node:path";
-import { Environment, nextCallId, TaskSpec } from "../core/environment.js";
+import { CallIdSource, Environment, TaskSpec } from "../core/environment.js";
 import { ToolResult } from "../core/types.js";
 import { PermissionCancelled, PermissionGate } from "./permissions.js";
 import {
@@ -21,6 +21,7 @@ import { liveTask } from "./task.js";
  * what the client-delegating backend must reproduce.
  */
 export class LocalEnv implements Environment {
+  private ids = new CallIdSource();
   readonly task: TaskSpec;
 
   constructor(
@@ -34,17 +35,17 @@ export class LocalEnv implements Environment {
    *  replay. */
   reset(): void {}
 
-  async readFile(path: string): Promise<string> {
-    // A missing file reads as empty, matching `SimulatedEnvironment`, so
-    // `edit_file`'s "old string not found" path rather than a throw.
+  async readFile(path: string): Promise<string | undefined> {
+    // A missing file reads as `undefined`, matching `SimulatedEnvironment`, so
+    // `edit_file`'s "no such file" path rather than a throw or a silent "".
     try {
       return await fsRead(absolutePath(this.cwd, path), "utf8");
     } catch {
-      return "";
+      return undefined;
     }
   }
 
-  async writeFile(path: string, content: string, callId = nextCallId()): Promise<ToolResult> {
+  async writeFile(path: string, content: string, callId = this.ids.next()): Promise<ToolResult> {
     const decision = await this.gate.ask({
       toolCallId: callId,
       kind: "edit",
@@ -67,7 +68,7 @@ export class LocalEnv implements Environment {
     return writeOk(path, callId);
   }
 
-  async run(command: string, callId = nextCallId()): Promise<ToolResult> {
+  async run(command: string, callId = this.ids.next()): Promise<ToolResult> {
     const cmd = command.trim();
 
     // Route the harness's `read_file` implementation through the filesystem
@@ -75,7 +76,7 @@ export class LocalEnv implements Environment {
     if (cmd.startsWith("cat ")) {
       const path = cmd.slice(4).trim();
       const content = await this.readFile(path);
-      if (!content) return failResult(callId, "cat", `cat: ${path}: No such file`);
+      if (content === undefined) return failResult(callId, "cat", `cat: ${path}: No such file`);
       return { callId, tool: "cat", stdout: content, stderr: "", exitCode: 0, bytes: content.length };
     }
 

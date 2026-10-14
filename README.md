@@ -31,6 +31,21 @@ them.
 > log reaches the context. The ordering is unchanged — the reducer still dominates — but the
 > attribution is now honest: the reducer carries the saving.
 >
+> A fourth round ([`REMEDIATION-4.md`](./REMEDIATION-4.md)) closes the residuals the first two
+> rounds deferred: the compacted wire stays well-formed under a real run (L-1), call ids are
+> per-run and per-environment rather than process-global (L-18), a missing file is no longer
+> indistinguishable from an empty one across every backend (L-15), and the search summary's
+> retained/rejected partition is now proved against the acceptance gates recomputed from the
+> recorded results rather than a partition identity that could not fail (L-20). The one
+> number-moving change is L-13: the search used to share one model across every task, candidate,
+> and held-out run, so its prefix-cache accounting billed each new conversation against the tail
+> of the one before it. The loop now asks the model factory for a fresh backend per task
+> evaluation, and the published figures moved a fraction again — most rows 0.0–0.2 points, the
+> reducer's own cost 0.2601 → 0.2676 — re-frozen and re-diffed under the round-3 guard. The
+> ordering, the retained set, and the held-out verdict are unchanged. The figures quoted in the
+> paragraphs above are the freezes as they stood at each audit; the table below is the current
+> freeze.
+>
 > Verification is enforced rather than trusted. `npm run check` re-runs the whole pipeline and
 > fails if the emitted `research-results.json` drifts from the committed file; `npm run
 > check-artifacts` fails if the README or the explainer drift from that file. CI runs both on
@@ -41,7 +56,7 @@ npm install
 npm run research     # run the full Auto-Research Loop + held-out evaluation
 npm run demo         # search loop without the held-out stage
 npm run agent        # serve the harness as an ACP v1 agent over stdio JSON-RPC
-npm test             # 140 tests: mechanisms, both gates, and the ACP server
+npm test             # 150 tests: mechanisms, both gates, and the ACP server
 npm run typecheck
 npm run check        # fail if research-results.json drifts from program output
 npm run check-artifacts  # fail if README/explainer drift from research-results.json
@@ -204,20 +219,20 @@ Captured from a real `npm run research` run; the program writes the same figures
 ```
 harness                   score       traffic(M)      cost($)       solved      tok eff       vs base cost
 ------------------------------------------------------------------------------------------------------------
-pi-baseline               1.000       4.6957          8.10          6/6         8.1040        --
-+action-fusion            1.000       4.7000          8.11          6/6         8.1103        -0.1%
-+online-compact           1.000       3.0978          7.11          6/6         7.1102        12.3%
-+evidence-reducer         1.000       0.1094          0.26          6/6         0.2601        96.8%
-+observation-pack         1.000       0.9083          3.87          6/6         3.8728        52.2%
-sol-pi[efficiency]        1.000       0.2822          1.55          6/6         1.5496        80.9%
-sol-pi[performance]       1.000       1.7155          4.89          6/6         4.8914        39.6%
-+online-compact-tight     1.000       2.6341          5.03          6/6         5.0303        37.9%
+pi-baseline               1.000       4.6987          8.11          6/6         8.1102        --
++action-fusion            1.000       4.7047          8.12          6/6         8.1200        -0.1%
++online-compact           1.000       3.1014          7.12          6/6         7.1176        12.2%
++evidence-reducer         1.000       0.1130          0.27          6/6         0.2676        96.7%
++observation-pack         1.000       0.9130          3.88          6/6         3.8827        52.1%
+sol-pi[efficiency]        1.000       0.2880          1.56          6/6         1.5617        80.7%
+sol-pi[performance]       1.000       1.7202          4.90          6/6         4.9012        39.6%
++online-compact-tight     1.000       2.6377          5.04          6/6         5.0378        37.9%
 
-[gate] +evidence-reducer      score=1.000 traffic=0.1094M cost=$0.26 -> RETAIN | aggregateScore within tolerance | tokenTraffic -97.7%, cost -96.8%
-held-out frozen   +evidence-reducer    score=1.000 solved=2/2 cost=$0.06 traffic=0.0213M
-held-out baseline pi-baseline          score=1.000 solved=2/2 cost=$1.48 traffic=0.5487M
-cost saved on held-out: 95.7%
-held-out verdict      : PASS — aggregateScore within tolerance; tokenTraffic -96.1%, cost -95.7%
+[gate] +evidence-reducer      score=1.000 traffic=0.1130M cost=$0.27 -> RETAIN | aggregateScore within tolerance | tokenTraffic -97.6%, cost -96.7%
+held-out frozen   +evidence-reducer    score=1.000 solved=2/2 cost=$0.07 traffic=0.0225M
+held-out baseline pi-baseline          score=1.000 solved=2/2 cost=$1.48 traffic=0.5499M
+cost saved on held-out: 95.5%
+held-out verdict      : PASS — aggregateScore within tolerance; tokenTraffic -95.9%, cost -95.5%
 ```
 
 Three things worth flagging in these numbers:
@@ -236,7 +251,7 @@ Three things worth flagging in these numbers:
   verbatim, the write price for the appended tail, and the full input price for anything a
   mechanism rewrote mid-context. ObservationPack substitutes archived observations *in place*, so
   every substitution invalidates the suffix that was already cached — its saving falls from 79.5%
-  to 52.2% once that rewrite is billed, and OnlineContextCompact's falls from 33.7% to 12.3%. The
+  to 52.1% once that rewrite is billed, and OnlineContextCompact's falls from 33.7% to 12.2%. The
   reducer escapes the effect because it acts before the observation reaches the context at all.
   An earlier build recorded zero cache traffic in the ledger, which made substitution look free;
   `probes/measure-cache-prefix.ts` measures the effect directly.

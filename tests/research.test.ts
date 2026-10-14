@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { AutoResearchLoop, CandidateConfig, EvalResult, ProposalFamily } from "../src/research/loop.js";
-import { ScriptedModel, ScriptStep } from "../src/core/model.js";
+import { ModelBackend, ScriptedModel, ScriptStep } from "../src/core/model.js";
 import { Harness, HarnessOptions } from "../src/core/harness.js";
 import { SimulatedEnvironment } from "../src/core/environment.js";
 import { buildMechanisms, MechanismName } from "../src/mechanisms/stack.js";
@@ -52,15 +52,24 @@ function evalStub(over: Partial<EvalResult> = {}): EvalResult {
 }
 
 function makeLoop() {
-  const model = new ScriptedModel({ id: "test", contextWindow: 200_000 });
+  // L-13: the factory's constructions are recorded so a test can prove the loop
+  // asks for a fresh model per task rather than reusing one conversation's state.
+  const constructions: ModelBackend[] = [];
+  const modelFactory = () => {
+    const model = new ScriptedModel({ id: "test", contextWindow: 200_000 });
+    constructions.push(model);
+    return model;
+  };
   const baseline: CandidateConfig = { id: "pi", mechanisms: [], params: {}, family: "improvement-and-evaluation", origin: "base" };
   const cheap: CandidateConfig = { id: "cheap", mechanisms: ["EvidencePreservingReducer", "ObservationPack"], params: {}, family: "context", origin: "test" };
   const wasteful: CandidateConfig = { id: "wasteful", mechanisms: [], params: {}, family: "tools", origin: "test" };
   return {
-    model,
+    modelFactory,
     baseline,
+    candidates: [cheap, wasteful],
+    constructions,
     loop: new AutoResearchLoop({
-      model,
+      model: modelFactory,
       tasks: REPO_TASKS,
       baselineConfig: baseline,
       candidates: [cheap, wasteful],
@@ -127,11 +136,49 @@ test("nondominated selection drops a dominated candidate", () => {
 });
 
 test("the search loop evaluates, gates, and retains candidates", async () => {
-  const { loop } = makeLoop();
+  const { loop, candidates } = makeLoop();
   const summary = await loop.run();
   assert.equal(summary.proposals, 2);
   assert.ok(summary.baseline.aggregateScore > 0, "baseline solves tasks");
-  assert.equal(summary.retained.length + summary.rejected.length, summary.proposals, "every candidate reaches a gate verdict");
+
+  // L-20: the summary's retained/rejected partition is only meaningful if it
+  // agrees with the acceptance gates recomputed from the recorded results.
+  // `retained.length + rejected.length === proposals` is true by construction
+  // and would hold even if run() filed every candidate under the wrong list.
+  const rule = AutoResearchLoop.defaultAcceptance();
+  const results = loop.getResults();
+  const baseline = results.get(summary.baseline.configId)!;
+  const expectedRetained: string[] = [];
+  const expectedRejected: string[] = [];
+  for (const cand of candidates) {
+    const res = results.get(cand.id)!;
+    const cap = loop.capabilityGate(res, baseline, rule);
+    const eff = loop.efficiencyGate(res, baseline, rule);
+    if (cap.pass && eff.pass) expectedRetained.push(cand.id);
+    else expectedRejected.push(cand.id);
+  }
+  assert.deepEqual(
+    summary.rejected.slice().sort(),
+    expectedRejected.sort(),
+    "the rejected list is exactly the candidates the recomputed gates fail",
+  );
+  assert.deepEqual(
+    summary.retained.slice().sort(),
+    loop.nondominated(expectedRetained.map((id) => results.get(id)!)).map((r) => r.configId).sort(),
+    "the retained list is exactly the gate-passing candidates, minus the dominated",
+  );
+});
+
+test("a model is built per task, so no conversation state leaks across evaluations", async () => {
+  // L-13: the loop owns no model state — it asks the factory for one model per
+  // task evaluation. A single shared backend would carry per-conversation state
+  // (the scripted model's prefix-cache accounting compares each request against
+  // the previous one) across task boundaries, billing every new conversation
+  // against the tail of the one before it.
+  const { loop, constructions } = makeLoop();
+  await loop.run();
+  assert.equal(constructions.length, 9, "(1 baseline + 2 candidates) x 3 tasks: one fresh model each");
+  assert.equal(new Set(constructions).size, 9, "each is a distinct instance, never a handed-back shared one");
 });
 
 test("acceptance metrics are fixed up front and not derived from candidates", () => {

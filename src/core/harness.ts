@@ -1,4 +1,4 @@
-import { Environment, nextCallId, summarizeResult } from "./environment.js";
+import { Environment, summarizeResult } from "./environment.js";
 import { ModelBackend } from "./model.js";
 import { estimateTokens, estimateJsonTokens } from "./tokens.js";
 import {
@@ -129,7 +129,17 @@ export class Harness {
   meter = new UsageMeter();
   trace: TraceEntry[] = [];
   private notifiedStepIds = new Set<number>();
+  /** Call ids are per-run and per-harness, not process-global: two harnesses
+   *  sharing one counter would interleave their ids, and a handle like
+   *  `obs:call_7` is only meaningful inside the run that minted it. */
+  private callSeq = 0;
   protected systemPrompt: string;
+
+  /** Mint the next result id. Ids restart per `begin()` because every run is a
+   *  fresh conversation; a resumed multi-prompt session keeps counting. */
+  nextCallId(): string {
+    return `call_${++this.callSeq}`;
+  }
   // Loop state lives on the instance so a host can drive one turn at a time.
   protected turn = 0;
   protected lastResponse: ModelResponse | undefined;
@@ -233,6 +243,7 @@ export class Harness {
     this.meter = new UsageMeter();
     this.trace = [];
     this.turn = 0;
+    this.callSeq = 0;
     this.lastResponse = undefined;
     this.aborted = false;
     this.notifiedStepIds = new Set(
@@ -443,7 +454,7 @@ export class Harness {
       // Mint the result id from the request so results correlate back to the
       // call that produced them; duplicate literals would collide within a
       // turn and mis-key the ObservationPack archive.
-      const callId = nextCallId();
+      const callId = this.nextCallId();
       this.emit({ type: "tool_started", turn: this.turn, callId, call });
       let result = await this.executeOne(call, callId);
       for (const m of this.mechanisms) {
@@ -455,7 +466,7 @@ export class Harness {
     return out;
   }
 
-  protected async executeOne(call: ToolCall, callId = nextCallId()): Promise<ToolResult> {
+  protected async executeOne(call: ToolCall, callId = this.nextCallId()): Promise<ToolResult> {
     const env = this.env;
     switch (call.tool) {
       case "read_file":
@@ -470,11 +481,11 @@ export class Harness {
         // model never sees `wrote …` for a file that was never touched.
         if (written.exitCode !== 0) return written;
         if (runAfter.length) {
-          const merged = await Promise.all(runAfter.map((c) => env.run(c)));
+          const merged = await Promise.all(runAfter.map((c) => env.run(c, this.nextCallId())));
           const ok = merged.every((r) => r.exitCode === 0);
           // Roll the mutation back if any follow-up command failed, so the
           // fused call is atomic with respect to the model's observation.
-          if (!ok) await env.writeFile(path, prior);
+          if (!ok) await env.writeFile(path, prior ?? "");
           const stdout = `wrote ${path}\n` + merged.map((r) => summarizeResult(r)).join("\n");
           return {
             callId: merged[0]?.callId ?? callId,
@@ -492,6 +503,17 @@ export class Harness {
         const oldS = String(call.args.old ?? "");
         const newS = String(call.args.new ?? "");
         const current = await env.readFile(path);
+        if (current === undefined) {
+          return {
+            callId,
+            tool: call.tool,
+            stdout: "",
+            stderr: `edit_file: no such file: ${path}`,
+            exitCode: 1,
+            bytes: 0,
+            error: "no such file",
+          };
+        }
         if (!current.includes(oldS)) {
           return {
             callId,
@@ -508,7 +530,7 @@ export class Harness {
         const written = await env.writeFile(path, applied, callId);
         if (written.exitCode !== 0) return written;
         if (runAfter.length) {
-          const merged = await Promise.all(runAfter.map((c) => env.run(c)));
+          const merged = await Promise.all(runAfter.map((c) => env.run(c, this.nextCallId())));
           const ok = merged.every((r) => r.exitCode === 0);
           if (!ok) await env.writeFile(path, current);
           const stdout = `edited ${path}\n` + merged.map((r) => summarizeResult(r)).join("\n");

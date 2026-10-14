@@ -5,6 +5,11 @@ import { tmpdir } from "node:os";
 import { test } from "node:test";
 import { ScriptedModel } from "../src/core/model.js";
 import { Message, ModelRequest, ModelResponse } from "../src/core/types.js";
+import { SimulatedEnvironment } from "../src/core/environment.js";
+import { Harness } from "../src/core/harness.js";
+import { LONG_HORIZON_TASK } from "../src/tasks/corpus.js";
+import { OnlineContextCompact } from "../src/mechanisms/online-compact.js";
+import { ScriptStep } from "../src/core/model.js";
 import { AnthropicProvider } from "../src/providers/anthropic.js";
 import { LiveModel } from "../src/providers/live-model.js";
 import { providerFromEnv } from "../src/providers/index.js";
@@ -271,5 +276,81 @@ test("providerFromEnv loads a script from disk for the scripted provider", () =>
     assert.equal(p.id, "scripted-test");
   } finally {
     fs.unlinkSync(tmp);
+  }
+});
+
+test("a compacted request keeps every tool result answered by an assistant turn", async () => {
+  // L-1: OnlineContextCompact injects a "[compacted ...]" user message between
+  // the head and a token-budgeted tail, which can orphan the tool results that
+  // the tail starts with. The provider wire cannot express a result without a
+  // turn to answer, so `LiveModel.flatten` must reconstruct that turn from the
+  // tool messages' own callId/name/args. This proves the wire is well-formed
+  // after a real compaction inside a real run, not just on a hand-built list.
+  const scripted = new ScriptedProvider(new ScriptedModel({ id: "compact", contextWindow: 60_000 }));
+  const steps: ScriptStep[] = [
+    { kind: "tool", calls: [{ tool: "read_file", args: { path: "server.py" } }] },
+    { kind: "tool", calls: [{ tool: "write_file", args: { path: "server.py", content: "def health():\n    return 'ok'\n" } }] },
+    { kind: "tool", calls: [{ tool: "run", args: { command: "test" } }] },
+  ];
+  for (let i = 0; i < 8; i++) {
+    steps.push({ kind: "tool", calls: [{ tool: "run", args: { command: "build" } }] });
+    steps.push({ kind: "tool", calls: [{ tool: "run", args: { command: "test" } }] });
+  }
+  steps.push({ kind: "done", summary: "done" });
+  scripted.load(steps);
+
+  const requests: ProviderRequest[] = [];
+  const provider: ChatProvider = {
+    id: scripted.id,
+    contextWindow: scripted.contextWindow,
+    async chat(req: ProviderRequest) {
+      requests.push(req);
+      return scripted.chat(req);
+    },
+  };
+
+  const env = new SimulatedEnvironment(LONG_HORIZON_TASK);
+  const harness = new Harness({
+    id: "compact",
+    model: new LiveModel(provider),
+    env,
+    mechanisms: [new OnlineContextCompact({ contextWindow: 60_000 })],
+    maxTurns: 40,
+  });
+  const res = await harness.run();
+  assert.equal(res.success, true);
+
+  // The run actually compacted, so at least one request is post-compaction.
+  assert.ok(res.trace.some((t) => t.compacted), "the run must compact for this proof to mean anything");
+  assert.ok(
+    requests.some((rs) => rs.messages.some((m) => m.role === "user" && (m.content ?? "").includes("compacted"))),
+    "the wire must carry the compaction marker",
+  );
+
+  // Every run of tool results on every request the model was sent is answered
+  // by an assistant turn carrying exactly the run's ids. A result dropped to
+  // `role: "user"` (the malformed-wire failure mode) also breaks the count, so
+  // this catches that too.
+  const toolMessages = requests.flatMap((rs) => rs.messages.filter((m) => m.role === "tool"));
+  const results = res.trace.flatMap((t) => t.results);
+  assert.ok(toolMessages.length >= results.length, "every result reaches the provider as a tool message");
+  for (const rs of requests) {
+    const msgs = rs.messages;
+    for (let k = 0; k < msgs.length; ) {
+      if (msgs[k].role !== "tool") {
+        k++;
+        continue;
+      }
+      let j = k;
+      while (j < msgs.length && msgs[j].role === "tool") j++;
+      const run = msgs.slice(k, j);
+      const prev = msgs[k - 1];
+      assert.ok(
+        prev && prev.role === "assistant" && (prev.toolCalls ?? []).length === run.length &&
+          run.every((m, n) => prev.toolCalls![n].callId === m.toolCallId),
+        `a run of ${run.length} tool results must be answered by one assistant turn with the same ids in order`,
+      );
+      k = j;
+    }
   }
 });

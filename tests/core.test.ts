@@ -123,12 +123,73 @@ test("two mutations in one turn get distinct call ids", async () => {
   assert.equal(new Set(ids).size, ids.length, "call ids are unique within a turn");
 });
 
-test("reading an inherited key returns an empty file, not a prototype value", async () => {
+test("reading an inherited key reads as missing, not a prototype value", async () => {
   const env = new SimulatedEnvironment(REPO_TASKS[0]);
   const out = await env.run("cat toString");
   assert.equal(out.exitCode, 1, "toString is not a file");
   assert.equal(typeof out.stdout, "string");
-  assert.equal(await env.readFile("toString"), "", "no prototype-chain leak");
+  assert.equal(await env.readFile("toString"), undefined, "no prototype-chain leak");
+});
+
+test("a missing file reads as undefined, an existing empty file as an empty string", async () => {
+  const env = new SimulatedEnvironment(REPO_TASKS[0]);
+  assert.equal(await env.readFile("no_such_file.py"), undefined, "missing is undefined, not an empty string");
+  await env.writeFile("empty.py", "");
+  assert.equal(await env.readFile("empty.py"), "", "an existing empty file reads as a real empty string");
+
+  const cat = await env.run("cat empty.py");
+  assert.equal(cat.exitCode, 0, "cat of an existing empty file succeeds");
+  assert.equal(cat.stdout, "");
+  const missing = await env.run("cat no_such_file.py");
+  assert.equal(missing.exitCode, 1, "cat of a missing file fails");
+  assert.match(missing.stderr, /No such file/);
+});
+
+test("edit_file on a missing file says no such file, not old string not found", async () => {
+  const env = new SimulatedEnvironment(REPO_TASKS[0]);
+  const harness = new Harness({ id: "t", model: new ScriptedModel({ id: "t" }), env, maxTurns: 3 });
+  const res = await runOnce(harness, [{ tool: "edit_file", args: { path: "ghost.py", old: "a", new: "b" } }]);
+  const out = res.trace[0]?.results[0];
+  assert.ok(out, "the edit was executed");
+  assert.equal(out.exitCode, 1);
+  assert.match(out.stderr, /edit_file: no such file: ghost\.py/);
+  assert.doesNotMatch(out.stderr, /old string not found/);
+});
+
+test("an unsupported flag is reported as such, not as an unknown command", async () => {
+  const env = new SimulatedEnvironment(REPO_TASKS[0]);
+  const flagged = await env.run("test --verbose");
+  assert.equal(flagged.exitCode, 1);
+  assert.match(flagged.stderr, /unsupported flag: --verbose/, "the flag is the problem, so the model can retry without it");
+  assert.equal(flagged.tool, "test", "the failure is attributed to the tool that was asked for");
+  const unknown = await env.run("florbp");
+  assert.equal(unknown.exitCode, 1);
+  assert.match(unknown.stderr, /command not found: florbp/);
+});
+
+test("call ids are per-run and per-environment, not process-global", async () => {
+  const env = new SimulatedEnvironment(REPO_TASKS[0]);
+  const harness = new Harness({ id: "t", model: new ScriptedModel({ id: "t" }), env, maxTurns: 3 });
+  assert.equal(harness.nextCallId(), "call_1");
+  assert.equal(harness.nextCallId(), "call_2");
+
+  const first = await runOnce(harness, [{ tool: "run", args: { command: "test" } }]);
+  assert.equal(first.trace[0].results[0].callId, "call_1", "a run's ids start at call_1");
+  const second = await runOnce(harness, [{ tool: "run", args: { command: "test" } }]);
+  assert.equal(second.trace[0].results[0].callId, "call_1", "ids restart per run: the next run is a fresh conversation");
+
+  const a = new SimulatedEnvironment(REPO_TASKS[0]);
+  const b = new SimulatedEnvironment(REPO_TASKS[0]);
+  const ra = await a.writeFile("x.py", "x");
+  const rb = await b.writeFile("y.py", "y");
+  assert.equal(ra.callId, "call_1");
+  assert.equal(rb.callId, "call_1", "two environments in one process each start at call_1");
+
+  const after = await a.writeFile("x.py", "z");
+  assert.equal(after.callId, "call_2", "an environment's own ids advance across calls");
+  a.reset();
+  const restarted = await a.writeFile("x.py", "z");
+  assert.equal(restarted.callId, "call_1", "ids restart when the environment resets");
 });
 
 test("recall_observation recovers an archived observation through the tool", async () => {

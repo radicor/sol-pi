@@ -79,13 +79,11 @@ async function drive(opts: DriveOptions): Promise<DriveResult> {
     })
     .onRequest("fs/read_text_file", ({ params }): ReadTextFileResponse => {
       record.reads.push(params.path);
-      // A missing file reads as empty, matching the local backend, so the two
-      // stay interchangeable for the harness's prior-content read.
-      try {
-        return { content: readFileSync(params.path, "utf8") };
-      } catch {
-        return { content: "" };
-      }
+      // A missing file is an error, not an empty read: the client backend
+      // turns a failed read into an undefined read, so the host keeps
+      // "missing" distinct from "existing but empty" for the harness's
+      // prior-content read.
+      return { content: readFileSync(params.path, "utf8") };
     })
     .onRequest("fs/write_text_file", ({ params }): WriteTextFileResponse => {
       record.writes.push({ path: params.path, content: params.content });

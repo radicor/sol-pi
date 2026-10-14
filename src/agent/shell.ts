@@ -1,5 +1,10 @@
 import { ToolResult } from "../core/types.js";
 import path from "node:path";
+import { leadingWord } from "../core/environment.js";
+// Re-exported for the agent backends, which already import it from here; the
+// definition lives in core so the simulated world and the live backends cannot
+// drift apart (the reducer's allowlist matches this word exactly).
+export { leadingWord };
 
 /**
  * Cap on a single command's captured output. A real build or test log can be
@@ -22,13 +27,7 @@ export function capOutput(text: string): string {
  */
 export function shellFor(command: string): { command: string; args: string[] } {
   if (process.platform === "win32") return { command: "cmd.exe", args: ["/c", command] };
-  return { command: "sh", args: ["-c", command] };
-}
-
-/** The leading word is the tool the mechanisms see (the reducer's allowlist
- *  matches it exactly), so both backends derive it the same way. */
-export function leadingWord(command: string): string {
-  return command.trim().split(/\s+/)[0] ?? "sh";
+  return { command: "sh", args: ["-c", command] }
 }
 
 /**

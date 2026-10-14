@@ -199,7 +199,7 @@
     <div class="stat"><div class="v">4</div><div class="k">retained mechanisms</div></div>
     <div class="stat"><div class="v">2</div><div class="k">sequential gates</div></div>
     <div class="stat"><div class="v">−49.0%</div><div class="k">paper token traffic</div></div>
-    <div class="stat"><div class="v">−96.8%</div><div class="k">prototype token cost</div></div>
+    <div class="stat"><div class="v">−96.7%</div><div class="k">prototype token cost</div></div>
   </div>
 
   <h2><span class="num">1</span>The thesis: optimize the harness, not the model</h2>
@@ -396,14 +396,14 @@
         <tr><th scope="col">Harness</th><th scope="col">Traffic (M)</th><th scope="col">Cost ($)</th><th scope="col">Score</th><th scope="col">vs. base</th></tr>
       </thead>
       <tbody>
-        <tr><td>pi-baseline</td><td>4.6957</td><td>8.10</td><td>1.000</td><td>—</td></tr>
-        <tr><td>+action-fusion</td><td>4.7000</td><td>8.11</td><td>1.000</td><td class="bad">−0.1%</td></tr>
-        <tr><td>+online-compact</td><td>3.0978</td><td>7.11</td><td>1.000</td><td class="good">12.3%</td></tr>
-        <tr class="hl"><td>+evidence-reducer</td><td>0.1094</td><td>0.26</td><td>1.000</td><td class="good">96.8%</td></tr>
-        <tr><td>+observation-pack</td><td>0.9083</td><td>3.87</td><td>1.000</td><td class="good">52.2%</td></tr>
-        <tr class="hl"><td>sol-pi[efficiency]</td><td>0.2822</td><td>1.55</td><td>1.000</td><td class="good">80.9%</td></tr>
-        <tr><td>sol-pi[performance]</td><td>1.7155</td><td>4.89</td><td>1.000</td><td class="good">39.6%</td></tr>
-        <tr><td>+online-compact-tight</td><td>2.6341</td><td>5.03</td><td>1.000</td><td class="good">37.9%</td></tr>
+        <tr><td>pi-baseline</td><td>4.6987</td><td>8.11</td><td>1.000</td><td>—</td></tr>
+        <tr><td>+action-fusion</td><td>4.7047</td><td>8.12</td><td>1.000</td><td class="bad">−0.1%</td></tr>
+        <tr><td>+online-compact</td><td>3.1014</td><td>7.12</td><td>1.000</td><td class="good">12.2%</td></tr>
+        <tr class="hl"><td>+evidence-reducer</td><td>0.1130</td><td>0.27</td><td>1.000</td><td class="good">96.7%</td></tr>
+        <tr><td>+observation-pack</td><td>0.9130</td><td>3.88</td><td>1.000</td><td class="good">52.1%</td></tr>
+        <tr class="hl"><td>sol-pi[efficiency]</td><td>0.2880</td><td>1.56</td><td>1.000</td><td class="good">80.7%</td></tr>
+        <tr><td>sol-pi[performance]</td><td>1.7202</td><td>4.90</td><td>1.000</td><td class="good">39.6%</td></tr>
+        <tr><td>+online-compact-tight</td><td>2.6377</td><td>5.04</td><td>1.000</td><td class="good">37.9%</td></tr>
       </tbody>
     </table>
   </div>
@@ -427,21 +427,21 @@
   </p>
 
   <h3 style="margin-top:26px">Cost saved vs. baseline</h3>
-  <div class="card" role="img" aria-label="Cost saved versus baseline: +evidence-reducer 96.8%; sol-pi[efficiency] 80.9%; +observation-pack 52.2%; sol-pi[performance] 39.6%; +online-compact-tight 37.9%; +online-compact 12.3%; +action-fusion -0.1%.">
+  <div class="card" role="img" aria-label="Cost saved versus baseline: +evidence-reducer 96.7%; sol-pi[efficiency] 80.7%; +observation-pack 52.1%; sol-pi[performance] 39.6%; +online-compact-tight 37.9%; +online-compact 12.2%; +action-fusion -0.1%.">
     <div class="bar-row">
       <div class="lbl">+evidence-reducer</div>
-      <div class="bar-track" aria-hidden="true"><div class="bar-fill" style="width:96.8%;background:var(--accent2)"></div></div>
-      <div class="val" style="color:var(--accent2)">−96.8%</div>
+      <div class="bar-track" aria-hidden="true"><div class="bar-fill" style="width:96.7%;background:var(--accent2)"></div></div>
+      <div class="val" style="color:var(--accent2)">−96.7%</div>
     </div>
     <div class="bar-row">
       <div class="lbl">sol-pi[efficiency]</div>
-      <div class="bar-track" aria-hidden="true"><div class="bar-fill" style="width:80.9%;background:var(--accent2)"></div></div>
-      <div class="val" style="color:var(--accent2)">−80.9%</div>
+      <div class="bar-track" aria-hidden="true"><div class="bar-fill" style="width:80.7%;background:var(--accent2)"></div></div>
+      <div class="val" style="color:var(--accent2)">−80.7%</div>
     </div>
     <div class="bar-row">
       <div class="lbl">+observation-pack</div>
-      <div class="bar-track" aria-hidden="true"><div class="bar-fill" style="width:52.2%;background:var(--warn)"></div></div>
-      <div class="val" style="color:var(--warn)">−52.2%</div>
+      <div class="bar-track" aria-hidden="true"><div class="bar-fill" style="width:52.1%;background:var(--warn)"></div></div>
+      <div class="val" style="color:var(--warn)">−52.1%</div>
     </div>
     <div class="bar-row">
       <div class="lbl">sol-pi[performance]</div>
@@ -455,8 +455,8 @@
     </div>
     <div class="bar-row">
       <div class="lbl">+online-compact</div>
-      <div class="bar-track" aria-hidden="true"><div class="bar-fill" style="width:12.3%;background:var(--warn)"></div></div>
-      <div class="val" style="color:var(--warn)">−12.3%</div>
+      <div class="bar-track" aria-hidden="true"><div class="bar-fill" style="width:12.2%;background:var(--warn)"></div></div>
+      <div class="val" style="color:var(--warn)">−12.2%</div>
     </div>
     <div class="bar-row">
       <div class="lbl">+action-fusion</div>

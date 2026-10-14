@@ -63,15 +63,7 @@ export class UsageMeter {
     return this.perRequest.length;
   }
 
-  get perRequestUsage(): readonly Usage[] {
-    return this.perRequest;
-  }
-
   cost(rates: CostRates = DEFAULT_RATES): number {
     return usageCost(this.total, rates);
-  }
-
-  tokens(rates: CostRates = DEFAULT_RATES): number {
-    return totalTokens(this.total);
   }
 }

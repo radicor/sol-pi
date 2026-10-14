@@ -3,7 +3,7 @@ import type {
   ReadTextFileResponse,
   WriteTextFileResponse,
 } from "@agentclientprotocol/sdk";
-import { Environment, nextCallId, TaskSpec } from "../core/environment.js";
+import { CallIdSource, Environment, TaskSpec } from "../core/environment.js";
 import { ToolResult } from "../core/types.js";
 import { PermissionCancelled, PermissionGate } from "./permissions.js";
 import {
@@ -45,6 +45,7 @@ export interface TerminalHandleLike {
  * token-split into an argv.
  */
 export class ClientEnv implements Environment {
+  private ids = new CallIdSource();
   readonly task: TaskSpec;
 
   constructor(
@@ -58,15 +59,21 @@ export class ClientEnv implements Environment {
 
   reset(): void {}
 
-  async readFile(path: string): Promise<string> {
-    const res = await this.client.readTextFile({
-      sessionId: this.sessionId,
-      path: absolutePath(this.cwd, path),
-    });
-    return res.content;
+  async readFile(path: string): Promise<string | undefined> {
+    try {
+      const res = await this.client.readTextFile({
+        sessionId: this.sessionId,
+        path: absolutePath(this.cwd, path),
+      });
+      return res.content;
+    } catch {
+      // A client that cannot or will not supply the file reads as missing,
+      // matching the local backend; an empty file arrives as a real "".
+      return undefined;
+    }
   }
 
-  async writeFile(path: string, content: string, callId = nextCallId()): Promise<ToolResult> {
+  async writeFile(path: string, content: string, callId = this.ids.next()): Promise<ToolResult> {
     const decision = await this.gate.ask({
       toolCallId: callId,
       kind: "edit",
@@ -85,19 +92,13 @@ export class ClientEnv implements Environment {
     return writeOk(path, callId);
   }
 
-  async run(command: string, callId = nextCallId()): Promise<ToolResult> {
+  async run(command: string, callId = this.ids.next()): Promise<ToolResult> {
     const cmd = command.trim();
 
     if (cmd.startsWith("cat ")) {
       const path = cmd.slice(4).trim();
-      let content: string;
-      try {
-        content = await this.readFile(path);
-      } catch (err) {
-        const reason = err instanceof Error ? err.message : String(err);
-        return failResult(callId, "cat", `cat: ${path}: ${reason}`);
-      }
-      if (!content) return failResult(callId, "cat", `cat: ${path}: No such file`);
+      const content = await this.readFile(path);
+      if (content === undefined) return failResult(callId, "cat", `cat: ${path}: No such file`);
       return { callId, tool: "cat", stdout: content, stderr: "", exitCode: 0, bytes: content.length };
     }
 

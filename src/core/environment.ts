@@ -1,9 +1,30 @@
 import { ToolCall, ToolResult } from "./types.js";
 
-let callSeq = 0;
-export function nextCallId(): string {
-  return `call_${++callSeq}`;
+/**
+ * Per-instance call ids. A module-global counter mints ids that are unique
+ * process-wide but interleaved across environments, so a handle keyed by an id
+ * (`obs:call_7`) is only stable within the environment that minted it. Each
+ * environment holds one of these for the calls nobody dispatches an id into.
+ */
+export class CallIdSource {
+  private seq = 0;
+  next(): string {
+    return `call_${++this.seq}`;
+  }
+  reset(): void {
+    this.seq = 0;
+  }
 }
+
+/** The leading word is the tool the mechanisms see (the reducer's allowlist
+ *  matches it exactly), so both backends derive it the same way. Lives in core
+ *  so the simulated world and the agent backends cannot drift apart. */
+export function leadingWord(command: string): string {
+  return command.trim().split(/\s+/)[0] ?? "sh";
+}
+
+/** The leading words the simulated shell recognizes, for the flag check. */
+const KNOWN_TOOLS = new Set(["ls", "cat", "grep", "test", "pytest", "npm", "build", "cargo", "echo"]);
 
 export interface TestSpec {
   name: string;
@@ -34,11 +55,16 @@ export interface TaskSpec {
  * backend's write can be denied or fail, and the harness must show the model
  * that instead of reporting a write that never happened. The simulated world's
  * writes never fail, so the research path is unchanged.
+ *
+ * `readFile` resolves to `undefined` for a missing file and to its (possibly
+ * empty) contents for one that exists; a caller that cannot tell the two apart
+ * reports a missing file as an empty read, and the model cannot distinguish a
+ * file it should create from one it should edit.
  */
 export interface Environment {
   readonly task: TaskSpec;
   reset(): void | Promise<void>;
-  readFile(path: string): Promise<string>;
+  readFile(path: string): Promise<string | undefined>;
   writeFile(path: string, content: string, callId?: string): Promise<ToolResult>;
   run(command: string, callId?: string): Promise<ToolResult>;
   score(): number;
@@ -51,6 +77,7 @@ export interface Environment {
  */
 export class SimulatedEnvironment implements Environment {
   private files: Record<string, string> = {};
+  private ids = new CallIdSource();
   readonly task: TaskSpec;
 
   constructor(task: TaskSpec) {
@@ -60,16 +87,17 @@ export class SimulatedEnvironment implements Environment {
 
   reset(): void {
     this.files = { ...this.task.initialFiles };
+    this.ids.reset();
   }
 
-  async readFile(path: string): Promise<string> {
+  async readFile(path: string): Promise<string | undefined> {
     // Guard against prototype-chain lookups: `files` is a plain object, so an
     // inherited key such as "toString" would otherwise return a function
     // typed as string and confuse every downstream consumer.
-    return Object.hasOwn(this.files, path) ? this.files[path] : "";
+    return Object.hasOwn(this.files, path) ? this.files[path] : undefined;
   }
 
-  async writeFile(path: string, content: string, callId = nextCallId()): Promise<ToolResult> {
+  async writeFile(path: string, content: string, callId = this.ids.next()): Promise<ToolResult> {
     this.files[path] = content;
     // The exact result the harness built for itself before `writeFile` reported
     // an outcome, so the research path's observations are byte-identical.
@@ -84,7 +112,7 @@ export class SimulatedEnvironment implements Environment {
   }
 
   /** Simulated shell. Recognizes a small command vocabulary. */
-  async run(command: string, callId = nextCallId()): Promise<ToolResult> {
+  async run(command: string, callId = this.ids.next()): Promise<ToolResult> {
     const id = callId;
     const cmd = command.trim();
 
@@ -94,7 +122,7 @@ export class SimulatedEnvironment implements Environment {
     if (cmd.startsWith("cat ")) {
       const path = cmd.slice(4).trim();
       const content = await this.readFile(path);
-      if (!content) return this.fail(id, "cat", `cat: ${path}: No such file`);
+      if (content === undefined) return this.fail(id, "cat", `cat: ${path}: No such file`);
       return this.ok(id, "cat", content);
     }
     if (cmd.startsWith("grep ")) {
@@ -104,7 +132,7 @@ export class SimulatedEnvironment implements Environment {
       const target = m ? m[2] : rest.split(/\s+/)[1];
       if (!target) return this.fail(id, "grep", `grep: missing target file`);
       const content = await this.readFile(target);
-      if (!content) return this.fail(id, "grep", `grep: ${target}: No such file`);
+      if (content === undefined) return this.fail(id, "grep", `grep: ${target}: No such file`);
       const lines = content.split("\n").filter((l) => l.includes(pattern ?? ""));
       return this.ok(id, "grep", lines.join("\n") || "(no matches)");
     }
@@ -117,9 +145,17 @@ export class SimulatedEnvironment implements Environment {
     if (cmd.startsWith("echo ")) {
       return this.ok(id, "echo", cmd.slice(5));
     }
+    const tokens = cmd.split(/\s+/);
+    const flags = tokens.slice(1).filter((t) => t.startsWith("-"));
+    if (flags.length && KNOWN_TOOLS.has(tokens[0])) {
+      // The vocabulary recognizes the command, not the flag: say which flag is
+      // unsupported rather than claiming the whole command is unknown, so the
+      // model can retry without it instead of switching tools.
+      return this.fail(id, leadingWord(cmd), `unsupported flag: ${flags[0]} (the simulated shell has no flag handling)`);
+    }
     // Unknown commands report the leading word, not the full argument string,
     // so an unsupported flag reads as an unknown command rather than noise.
-    return this.fail(id, "shell", `command not found: ${cmd.split(/\s+/)[0]}`);
+    return this.fail(id, "shell", `command not found: ${tokens[0]}`);
   }
 
   private runTests(callId: string, cmd: string): ToolResult {

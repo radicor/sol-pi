@@ -112,14 +112,12 @@ async function main(): Promise<void> {
         record.permissions.push(params);
         return { outcome: { outcome: "selected", optionId: "allow_once" } };
       })
-      .onRequest("fs/read_text_file", ({ params }) => {
+      .onRequest("fs/read_text_file", ({ params }): ReadTextFileResponse => {
         record.reads.push(params.path);
-        // A missing file reads as empty, matching the local backend.
-        try {
-          return { content: readFileSync(params.path, "utf8") };
-        } catch {
-          return { content: "" };
-        }
+        // A missing file is an error, not an empty read: the client backend
+        // turns a failed read into an undefined read, so an honest host keeps
+        // "missing" distinct from "existing but empty".
+        return { content: readFileSync(params.path, "utf8") };
       })
       .onRequest("fs/write_text_file", ({ params }): WriteTextFileResponse => {
         record.writes.push({ path: params.path, content: params.content });

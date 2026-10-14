@@ -107,14 +107,20 @@ export interface GenerationLog {
 }
 
 export interface SearchOptions {
-  model: ModelBackend;
+  /** Builds a fresh model for each task evaluation. A single shared backend
+   *  would carry per-conversation state — the scripted model's prefix-cache
+   *  accounting compares each request against the previous one — across task
+   *  boundaries, billing every new conversation against the tail of the one
+   *  before it, and would interleave its cursor under any future
+   *  parallelism. The loop owns no model state; it asks for one per task. */
+  model: () => ModelBackend;
   tasks: TaskSpec[];
   baselineConfig: CandidateConfig;
   candidates: CandidateConfig[];
   acceptance: AcceptanceRule;
   rates?: CostRates;
   maxTurns?: number;
-  scriptFor: (task: TaskSpec, config: CandidateConfig, model: ModelBackend) => ScriptStep[];
+  scriptFor: (task: TaskSpec, config: CandidateConfig) => ScriptStep[];
   buildHarness: (config: CandidateConfig, opts: HarnessOptions) => Harness;
   log?: (msg: string) => void;
 }
@@ -145,10 +151,11 @@ export class AutoResearchLoop {
 
     for (const task of this.opts.tasks) {
       const env = new SimulatedEnvironment(task);
-      loadScript(this.opts.model, () => this.opts.scriptFor(task, config, this.opts.model));
+      const model = this.opts.model();
+      loadScript(model, () => this.opts.scriptFor(task, config));
       const harness = this.opts.buildHarness(config, {
         id: config.id,
-        model: this.opts.model,
+        model,
         env,
         maxTurns: this.opts.maxTurns ?? 24,
         rates: this.opts.rates ?? DEFAULT_RATES,
@@ -309,10 +316,10 @@ export async function heldOutEvaluation(
   config: CandidateConfig,
   tasks: TaskSpec[],
   buildHarness: (config: CandidateConfig, opts: HarnessOptions) => Harness,
-  model: ModelBackend,
+  modelFactory: () => ModelBackend,
   rates: CostRates = DEFAULT_RATES,
   maxTurns = 24,
-  scriptFor: (task: TaskSpec, config: CandidateConfig, model: ModelBackend) => ScriptStep[],
+  scriptFor: (task: TaskSpec, config: CandidateConfig) => ScriptStep[],
 ): Promise<EvalResult> {
   const perTask: RunResult[] = [];
   const traces: TraceEntry[][] = [];
@@ -320,7 +327,8 @@ export async function heldOutEvaluation(
 
   for (const task of tasks) {
     const env = new SimulatedEnvironment(task);
-    loadScript(model, () => scriptFor(task, config, model));
+    const model = modelFactory();
+    loadScript(model, () => scriptFor(task, config));
     const harness = buildHarness(config, { id: config.id, model, env, maxTurns, rates });
     const res = await harness.run();
     perTask.push(res);

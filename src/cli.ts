@@ -246,19 +246,19 @@ async function main() {
   const doResearch = args.includes("--research");
   const checkMode = args.includes("--check");
 
-  const model = new ScriptedModel({ id: "gpt-5.6-sol", contextWindow: 200_000, outputTokensPerTurn: 60 });
+  const modelFactory = () => new ScriptedModel({ id: "gpt-5.6-sol", contextWindow: 200_000, outputTokensPerTurn: 60 });
   console.log("SoL-Pi prototype — Auto-Research Loop for harness token efficiency");
-  console.log(`model backend: ${model.id}   search environments: ${SEARCH_ENVIRONMENTS.length}   held-out: ${HELD_OUT_ENVIRONMENTS.length}`);
+  console.log(`model backend: gpt-5.6-sol   search environments: ${SEARCH_ENVIRONMENTS.length}   held-out: ${HELD_OUT_ENVIRONMENTS.length}`);
 
   const loop = new AutoResearchLoop({
-    model,
+    model: modelFactory,
     tasks: SEARCH_ENVIRONMENTS,
     baselineConfig: toConfig(CANDIDATES[0]),
     candidates: CANDIDATES.slice(1).map(toConfig),
     acceptance: AutoResearchLoop.defaultAcceptance(),
     rates: DEFAULT_RATES,
     maxTurns: 24,
-    scriptFor: (task, config) => scriptFor(task, config),
+    scriptFor,
     buildHarness,
     log: (msg) => console.log(msg),
   });
@@ -295,19 +295,19 @@ async function main() {
       frozen,
       HELD_OUT_ENVIRONMENTS,
       buildHarness,
-      model,
+      modelFactory,
       DEFAULT_RATES,
       24,
-      (task, config) => scriptFor(task, config),
+      scriptFor,
     );
     const baseHeld = await heldOutEvaluation(
       toConfig(CANDIDATES[0]),
       HELD_OUT_ENVIRONMENTS,
       buildHarness,
-      model,
+      modelFactory,
       DEFAULT_RATES,
       24,
-      (task, config) => scriptFor(task, config),
+      scriptFor,
     );
     for (const [label, r] of [["frozen", heldOut], ["baseline", baseHeld]] as const) {
       console.log(
@@ -348,6 +348,7 @@ async function main() {
   for (const mech of ["ActionFusion", "ObservationPack", "EvidencePreservingReducer", "OnlineContextCompact"] as const) {
     const cfg: CandidateConfig = { id: mech, mechanisms: [mech], params: {}, family: "tools", origin: "add-one" };
     const env = new SimulatedEnvironment(task);
+    const model = modelFactory();
     loadScript(model, () => scriptFor(task, cfg));
     const h = buildHarness(cfg, { id: mech, model, env, maxTurns: 40 });
     const res = await h.run();
